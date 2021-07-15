@@ -116,7 +116,7 @@ public:
     Forcibly activates the screen saver if \c activate is true otherwise
     forcibly deactivates it.
     */
-    void                screensaver(bool activate);
+    void                screensaver(bool activate) const;
 
     //! Notify of key press
     /*!
@@ -233,6 +233,13 @@ public:
     void                startDraggingFiles(DragFileList& fileList);
 
     void                setEnableDragDrop(bool enabled);
+
+    //! Determine the name of the app causing a secure input state
+    /*!
+    On MacOS check which app causes a secure input state to be enabled. No alternative on other platforms
+    */
+    String              getSecureInputApp() const;
+
     //@}
     //! @name accessors
     //@{
@@ -330,9 +337,6 @@ private:
 
     // true if the cursor is on this screen
     bool                m_entered;
-
-    // true if screen saver should be synchronized to server
-    bool                m_screenSaverSync;
 
     // note toggle keys that toggles on up/down (false) or on
     // transition (true)

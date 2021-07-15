@@ -15,8 +15,8 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 #include "SettingsDialog.h"
+#include "validators/ScreenNameValidator.h"
 
 #include "CoreInterface.h"
 #include "SynergyLocale.h"
@@ -34,8 +34,6 @@
 #include <QFileDialog>
 #include <QDir>
 
-static const char networkSecurity[] = "ns";
-
 SettingsDialog::SettingsDialog(QWidget* parent, AppConfig& config) :
     QDialog(parent, Qt::WindowTitleHint | Qt::WindowSystemMenuHint),
     Ui::SettingsDialogBase(),
@@ -50,35 +48,63 @@ SettingsDialog::SettingsDialog(QWidget* parent, AppConfig& config) :
     m_Locale.fillLanguageComboBox(m_pComboLanguage);
 
     loadFromConfig();
+    m_isSystemAtStart = appConfig().isSystemScoped();
+    buttonBox->button(QDialogButtonBox::Save)->setEnabled(false);
+    enableControls(appConfig().isWritable());
+
+    //temporary disable language sync logic
+    m_pCheckBoxLanguageSync->setVisible(false);
+
+    const auto& serveConfig = m_pMainWindow->serverConfig();
+    m_pLineEditScreenName->setValidator(new validators::ScreenNameValidator(m_pLineEditScreenName, m_pLabelNameError, (&serveConfig.screens())));
+
+    connect(m_pLineEditLogFilename,     SIGNAL(textChanged(QString)),     this, SLOT(onChange()));
+    connect(m_pComboLogLevel,           SIGNAL(currentIndexChanged(int)), this, SLOT(onChange()));
+    connect(m_pLineEditCertificatePath, SIGNAL(textChanged(QString)),     this, SLOT(onChange()));
+    connect(m_pCheckBoxAutoConfig,      SIGNAL(clicked()),                this, SLOT(onChange()));
+    connect(m_pCheckBoxMinimizeToTray,  SIGNAL(clicked()),                this, SLOT(onChange()));
+    connect(m_pCheckBoxAutoHide,        SIGNAL(clicked()),                this, SLOT(onChange()));
+    connect(m_pCheckBoxPreventSleep,    SIGNAL(clicked()),                this, SLOT(onChange()));
+    connect(m_pLineEditInterface,       SIGNAL(textEdited(QString)),      this, SLOT(onChange()));
+    connect(m_pSpinBoxPort,             SIGNAL(valueChanged(int)),        this, SLOT(onChange()));
+    connect(m_pLineEditScreenName,      SIGNAL(textEdited(QString)),      this, SLOT(onChange()));
+    connect(m_pComboElevate,            SIGNAL(currentIndexChanged(int)), this, SLOT(onChange()));
+
+    adjustSize();
 }
 
 void SettingsDialog::accept()
 {
-    appConfig().setScreenName(m_pLineEditScreenName->text());
-    appConfig().setPort(m_pSpinBoxPort->value());
-    appConfig().setNetworkInterface(m_pLineEditInterface->text());
-    appConfig().setLogLevel(m_pComboLogLevel->currentIndex());
-    appConfig().setLogToFile(m_pCheckBoxLogToFile->isChecked());
-    appConfig().setLogFilename(m_pLineEditLogFilename->text());
-    appConfig().setLanguage(m_pComboLanguage->itemData(m_pComboLanguage->currentIndex()).toString());
-    appConfig().setElevateMode(static_cast<ElevateMode>(m_pComboElevate->currentIndex()));
-    appConfig().setAutoHide(m_pCheckBoxAutoHide->isChecked());
-    appConfig().setAutoConfig(m_pCheckBoxAutoConfig->isChecked());
-    appConfig().setMinimizeToTray(m_pCheckBoxMinimizeToTray->isChecked());
-    appConfig().setTLSCertPath(m_pLineEditCertificatePath->text());
-    appConfig().setTLSKeyLength(m_pComboBoxKeyLength->currentText());
+   appConfig().setLoadFromSystemScope(m_pRadioSystemScope->isChecked());
+   appConfig().setScreenName(m_pLineEditScreenName->text());
+   appConfig().setPort(m_pSpinBoxPort->value());
+   appConfig().setNetworkInterface(m_pLineEditInterface->text());
+   appConfig().setLogLevel(m_pComboLogLevel->currentIndex());
+   appConfig().setLogToFile(m_pCheckBoxLogToFile->isChecked());
+   appConfig().setLogFilename(m_pLineEditLogFilename->text());
+   appConfig().setLanguage(m_pComboLanguage->itemData(m_pComboLanguage->currentIndex()).toString());
+   appConfig().setElevateMode(static_cast<ElevateMode>(m_pComboElevate->currentIndex()));
+   appConfig().setAutoHide(m_pCheckBoxAutoHide->isChecked());
+   appConfig().setPreventSleep(m_pCheckBoxPreventSleep->isChecked());
+   appConfig().setAutoConfig(m_pCheckBoxAutoConfig->isChecked());
+   appConfig().setMinimizeToTray(m_pCheckBoxMinimizeToTray->isChecked());
+   appConfig().setTLSCertPath(m_pLineEditCertificatePath->text());
+   appConfig().setTLSKeyLength(m_pComboBoxKeyLength->currentText());
+   appConfig().setCryptoEnabled(m_pCheckBoxEnableCrypto->isChecked());
 
-    //We only need to test the System scoped Radio as they are connected
-    appConfig().setLoadFromSystemScope(m_pRadioSystemScope->isChecked());
-    m_appConfig.setCryptoEnabled(m_pCheckBoxEnableCrypto->isChecked());
-
-    QDialog::accept();
+   appConfig().saveSettings();
+   QDialog::accept();
 }
 
 void SettingsDialog::reject()
 {
     if (appConfig().language() != m_pComboLanguage->itemData(m_pComboLanguage->currentIndex()).toString()) {
         QSynergyApplication::getInstance()->switchTranslator(appConfig().language());
+    }
+
+    // We should restore scope at start if the user rejects changes.
+    if (appConfig().isSystemScoped() != m_isSystemAtStart) {
+        appConfig().setLoadFromSystemScope(m_isSystemAtStart);
     }
 
     QDialog::reject();
@@ -118,6 +144,7 @@ void SettingsDialog::loadFromConfig() {
     m_pLineEditLogFilename->setText(appConfig().logFilename());
     setIndexFromItemData(m_pComboLanguage, appConfig().language());
     m_pCheckBoxAutoHide->setChecked(appConfig().getAutoHide());
+    m_pCheckBoxPreventSleep->setChecked(appConfig().getPreventSleep());
     m_pCheckBoxMinimizeToTray->setChecked(appConfig().getMinimizeToTray());
     m_pLineEditCertificatePath->setText(appConfig().getTLSCertPath());
     m_pCheckBoxEnableCrypto->setChecked(m_appConfig.getCryptoEnabled());
@@ -155,27 +182,15 @@ void SettingsDialog::loadFromConfig() {
 #endif
 
     m_pCheckBoxEnableCrypto->setChecked(m_appConfig.getCryptoEnabled());
-    m_pGroupBoxTLS->setVisible(m_appConfig.getCryptoEnabled());
 
-#ifdef SYNERGY_ENTERPRISE
-
-    m_pCheckBoxEnableCrypto->setEnabled(true);
-     m_pLabelProUpgrade->hide();
-
-     m_pCheckBoxAutoConfig->hide();
-     m_pLabelInstallBonjour->hide();
-
-#else
-
-    m_pCheckBoxEnableCrypto->setEnabled(m_appConfig.isCryptoAvailable());
-    m_pLabelProUpgrade->setVisible(!m_appConfig.isCryptoAvailable());
-
+#if !defined(SYNERGY_ENTERPRISE) && defined(SYNERGY_AUTOCONFIG)
     m_pCheckBoxAutoConfig->setChecked(appConfig().autoConfig());
-
+#else
+    m_pCheckBoxAutoConfig->hide();
+    m_pLabelInstallBonjour->hide();
 #endif
-    adjustSize();
-}
 
+}
 
 void SettingsDialog::allowAutoConfig()
 {
@@ -188,8 +203,10 @@ void SettingsDialog::on_m_pCheckBoxLogToFile_stateChanged(int i)
 {
     bool checked = i == 2;
 
+    m_pLabelLogPath->setEnabled(checked);
     m_pLineEditLogFilename->setEnabled(checked);
     m_pButtonBrowseLog->setEnabled(checked);
+    buttonBox->button(QDialogButtonBox::Save)->setEnabled(isModified());
 }
 
 void SettingsDialog::on_m_pButtonBrowseLog_clicked()
@@ -209,17 +226,36 @@ void SettingsDialog::on_m_pComboLanguage_currentIndexChanged(int index)
 {
     QString ietfCode = m_pComboLanguage->itemData(index).toString();
     QSynergyApplication::getInstance()->switchTranslator(ietfCode);
+    buttonBox->button(QDialogButtonBox::Save)->setEnabled(isModified());
 }
 
-void SettingsDialog::on_m_pCheckBoxEnableCrypto_toggled(bool checked)
+void SettingsDialog::on_m_pCheckBoxEnableCrypto_clicked(bool checked)
 {
-    m_appConfig.setCryptoEnabled(checked);
-    if (checked) {
-        verticalSpacer_4->changeSize(10, 10, QSizePolicy::Minimum);
-    } else {
-        verticalSpacer_4->changeSize(10, 0, QSizePolicy::Ignored);
+    if (appConfig().isCryptoAvailable())
+    {
+        m_pLabelKeyLength->setEnabled(checked);
+        m_pComboBoxKeyLength->setEnabled(checked);
+        m_pLabelCertificate->setEnabled(checked);
+        m_pLineEditCertificatePath->setEnabled(checked);
+        m_pPushButtonBrowseCert->setEnabled(checked);
+        m_pPushButtonRegenCert->setEnabled(checked);
+
+        buttonBox->button(QDialogButtonBox::Save)->setEnabled(isModified());
     }
-    adjustSize();
+    else
+    {
+        m_pCheckBoxEnableCrypto->setChecked(false);
+
+        QMessageBox message(this);
+        message.addButton(QObject::tr("Close"), QMessageBox::RejectRole);
+        message.addButton(QObject::tr("Upgrade"), QMessageBox::AcceptRole);
+        message.setText(QObject::tr("TLS encryption is Synergy Pro feature.\nPlease upgrade if this is important to you"));
+
+        if (message.exec() == QMessageBox::Accepted)
+        {
+            QDesktopServices::openUrl(QUrl(QCoreApplication::organizationDomain() + "account"));
+        }
+    }
 }
 
 void SettingsDialog::on_m_pLabelInstallBonjour_linkActivated(const QString&)
@@ -231,8 +267,11 @@ void SettingsDialog::on_m_pLabelInstallBonjour_linkActivated(const QString&)
 
 void SettingsDialog::on_m_pRadioSystemScope_toggled(bool checked)
 {
+    //We only need to test the System scoped Radio as they are connected
     appConfig().setLoadFromSystemScope(checked);
     loadFromConfig();
+    buttonBox->button(QDialogButtonBox::Save)->setEnabled(m_isSystemAtStart != checked);
+    enableControls(appConfig().isWritable());
 }
 
 void SettingsDialog::on_m_pPushButtonBrowseCert_clicked() {
@@ -254,6 +293,7 @@ void SettingsDialog::on_m_pPushButtonBrowseCert_clicked() {
 }
 
 void SettingsDialog::on_m_pComboBoxKeyLength_currentIndexChanged(int index) {
+    buttonBox->button(QDialogButtonBox::Save)->setEnabled(isModified());
     updateRegenButton();
 }
 
@@ -261,10 +301,9 @@ void SettingsDialog::updateRegenButton() {
     // Disable the Regenerate cert button if the key length is different to saved
     auto keyChanged = appConfig().getTLSKeyLength() != m_pComboBoxKeyLength->currentText();
     auto pathChanged = appConfig().getTLSCertPath() != m_pLineEditCertificatePath->text();
-    auto cryptoChanged = appConfig().getCryptoEnabled() != m_pCheckBoxEnableCrypto->isChecked();
     //NOR the above bools, if any have changed regen should be disabled as it will be done on save
-    auto nor = !(keyChanged || pathChanged || cryptoChanged);
-    m_pPushButtonRegenCert->setEnabled(nor);
+    auto nor = !(keyChanged || pathChanged);
+    m_pPushButtonRegenCert->setEnabled(nor && m_pCheckBoxEnableCrypto->isChecked());
 }
 
 void SettingsDialog::on_m_pPushButtonRegenCert_clicked() {
@@ -278,4 +317,74 @@ void SettingsDialog::updateKeyLengthOnFile(const QString &path) {
     m_pComboBoxKeyLength->setCurrentIndex(index);
     //Also update what is in the appconfig to match the file itself
     appConfig().setTLSKeyLength(length);
+}
+
+bool SettingsDialog::isModified()
+{
+   return (!m_pLineEditScreenName->text().isEmpty() &&
+      m_pLabelNameError->text().isEmpty() &&
+      (appConfig().screenName()          != m_pLineEditScreenName->text()
+      || appConfig().port()              != m_pSpinBoxPort->value()
+      || appConfig().networkInterface()  != m_pLineEditInterface->text()
+      || appConfig().logLevel()          != m_pComboLogLevel->currentIndex()
+      || appConfig().logToFile()         != m_pCheckBoxLogToFile->isChecked()
+      || appConfig().logFilename()       != m_pLineEditLogFilename->text()
+      || appConfig().language()          != m_pComboLanguage->itemData(m_pComboLanguage->currentIndex()).toString()
+      || appConfig().elevateMode()       != static_cast<ElevateMode>(m_pComboElevate->currentIndex())
+      || appConfig().getAutoHide()       != m_pCheckBoxAutoHide->isChecked()
+      || appConfig().getPreventSleep()   != m_pCheckBoxPreventSleep->isChecked()
+      || appConfig().autoConfig()        != m_pCheckBoxAutoConfig->isChecked()
+      || appConfig().getMinimizeToTray() != m_pCheckBoxMinimizeToTray->isChecked()
+      || appConfig().getTLSCertPath()    != m_pLineEditCertificatePath->text()
+      || appConfig().getTLSKeyLength()   != m_pComboBoxKeyLength->currentText()
+      || appConfig().getCryptoEnabled()  != m_pCheckBoxEnableCrypto->isChecked()
+      || appConfig().isSystemScoped()    != m_isSystemAtStart)
+   );
+}
+
+void SettingsDialog::enableControls(bool enable) {
+    m_pLineEditScreenName->setEnabled(enable);
+    m_pSpinBoxPort->setEnabled(enable);
+    m_pLineEditInterface->setEnabled(enable);
+    m_pComboLogLevel->setEnabled(enable);
+    m_pCheckBoxLogToFile->setEnabled(enable);
+    m_pComboLanguage->setEnabled(enable);
+    m_pComboElevate->setEnabled(enable);
+    m_pCheckBoxAutoHide->setEnabled(enable);
+    m_pCheckBoxPreventSleep->setEnabled(enable);
+    m_pCheckBoxAutoConfig->setEnabled(enable);
+    m_pCheckBoxMinimizeToTray->setEnabled(enable);
+    m_pLineEditCertificatePath->setEnabled(enable);
+    m_pComboBoxKeyLength->setEnabled(enable);
+    m_pPushButtonBrowseCert->setEnabled(enable);
+    m_pCheckBoxEnableCrypto->setEnabled(enable);
+    m_labelAdminRightsMessage->setVisible(!enable);
+
+    if (enable) {
+        m_pLabelLogPath->setEnabled(m_pCheckBoxLogToFile->isChecked());
+        m_pLineEditLogFilename->setEnabled(m_pCheckBoxLogToFile->isChecked());
+        m_pButtonBrowseLog->setEnabled(m_pCheckBoxLogToFile->isChecked());
+        m_pLabelKeyLength->setEnabled(m_pCheckBoxEnableCrypto->isChecked());
+        m_pComboBoxKeyLength->setEnabled(m_pCheckBoxEnableCrypto->isChecked());
+        m_pLabelCertificate->setEnabled(m_pCheckBoxEnableCrypto->isChecked());
+        m_pLineEditCertificatePath->setEnabled(m_pCheckBoxEnableCrypto->isChecked());
+        m_pPushButtonBrowseCert->setEnabled(m_pCheckBoxEnableCrypto->isChecked());
+        updateRegenButton();
+    }
+    else {
+        m_pLabelLogPath->setEnabled(enable);
+        m_pLineEditLogFilename->setEnabled(enable);
+        m_pButtonBrowseLog->setEnabled(enable);
+        m_pLabelKeyLength->setEnabled(enable);
+        m_pComboBoxKeyLength->setEnabled(enable);
+        m_pLabelCertificate->setEnabled(enable);
+        m_pLineEditCertificatePath->setEnabled(enable);
+        m_pPushButtonBrowseCert->setEnabled(enable);
+        m_pPushButtonRegenCert->setEnabled(enable);
+    }
+}
+
+void SettingsDialog::onChange()
+{
+   buttonBox->button(QDialogButtonBox::Save)->setEnabled(isModified());
 }

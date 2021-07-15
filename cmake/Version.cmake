@@ -5,7 +5,7 @@ cmake_minimum_required (VERSION 3.4)
 #
 
 set (SYNERGY_VERSION_MAJOR 1)
-set (SYNERGY_VERSION_MINOR 13)
+set (SYNERGY_VERSION_MINOR 14)
 set (SYNERGY_VERSION_PATCH 1)
 set (SYNERGY_VERSION_BUILD 1)
 set (SYNERGY_VERSION_STAGE "snapshot")
@@ -50,7 +50,7 @@ if (DEFINED SYNERGY_REVISION)
     endif()
     unset (SYNERGY_REVISION_LENGTH)
 else()
-    set (SYNERGY_REVISION "0badc0de")
+	set (SYNERGY_REVISION "0badc0de")
 endif()
 
 if (DEFINED ENV{BUILD_NUMBER})

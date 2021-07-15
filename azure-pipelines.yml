@@ -6,7 +6,7 @@ jobs:
 
   - job: Linux
     pool:
-      vmImage: 'ubuntu-16.04'
+      vmImage: 'ubuntu-latest'
 
     strategy:
       matrix:
@@ -14,18 +14,19 @@ jobs:
           image: symless/synergy-core:ubuntu16.04
           packager: deb
           name: ubuntu16
+          makeJobsLimit: 1
         ubuntu1804:
           image: symless/synergy-core:ubuntu18.04
           packager: deb
           name: ubuntu18
-        ubuntu1910:
-          image: symless/synergy-core:ubuntu19.10
-          packager: deb
-          name: ubuntu19
         ubuntu2004:
           image: symless/synergy-core:ubuntu20.04
           packager: deb
           name: ubuntu20
+        ubuntu2104:
+          image: symless/synergy-core:ubuntu21.04
+          packager: deb
+          name: ubuntu21
         debian9:
           image: symless/synergy-core:debian9
           packager: deb
@@ -46,12 +47,20 @@ jobs:
           image: symless/synergy-core:fedora30
           packager: rpm
           name: fedora30
+        fedora33:
+          image: symless/synergy-core:fedora33
+          packager: rpm
+          name: fedora33
+        fedora34:
+          image: symless/synergy-core:fedora34
+          packager: rpm
+          name: fedora34
         centos7.6:
           image: symless/synergy-core:centos7.6
           packager: rpm
           name: centos76
         centos8:
-          image: sgad/synergy-core:centos8
+          image: symless/synergy-core:centos8
           packager: rpm
           name: centos8
 

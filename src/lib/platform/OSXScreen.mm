@@ -46,6 +46,7 @@
 #include <AvailabilityMacros.h>
 #include <IOKit/hidsystem/event_status_driver.h>
 #include <AppKit/NSEvent.h>
+#include <libproc.h>
 
 // This isn't in any Apple SDK that I know of as of yet.
 enum {
@@ -57,6 +58,10 @@ enum {
 enum {
 	kCarbonLoopWaitTimeout = 10
 };
+
+void createSecureInputNotification();
+int getSecureInputEventPID();
+String getProcessName(int pid);
 
 // TODO: upgrade deprecated function usage in these functions.
 void setZeroSuppressionInterval();
@@ -681,8 +686,8 @@ OSXScreen::fakeMouseWheel(SInt32 xDelta, SInt32 yDelta) const
 		CGEventRef scrollEvent = CGEventCreateScrollWheelEvent(
 			NULL, kCGScrollEventUnitLine, 2,
 			mapScrollWheelFromSynergy(yDelta),
-			-mapScrollWheelFromSynergy(xDelta));
-		
+			mapScrollWheelFromSynergy(xDelta));
+
         // Fix for sticky keys
         CGEventFlags modifiers = m_keyState->getModifierStateAsOSXFlags();
         CGEventSetFlags(scrollEvent, modifiers);
@@ -749,6 +754,18 @@ OSXScreen::hideCursor()
 void
 OSXScreen::enable()
 {
+    if(App::instance().argsBase().m_preventSleep) {
+        CFStringRef reasonForActivity = CFSTR("Synergy application");
+
+        IOReturn result = IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleDisplaySleep,
+                                                        kIOPMAssertionLevelOn, reasonForActivity,
+                                                        &m_sleepPreventionAssertionID);
+        if(result != kIOReturnSuccess) {
+            m_sleepPreventionAssertionID = 0;
+            LOG((CLOG_ERR "failed to disable system idle sleep"));
+        }
+    }
+
 	// watch the clipboard
 	m_clipboardTimer = m_events->newTimer(1.0, NULL);
 	m_events->adoptHandler(Event::kTimer, m_clipboardTimer,
@@ -798,6 +815,10 @@ OSXScreen::enable()
 void
 OSXScreen::disable()
 {
+    if(App::instance().argsBase().m_preventSleep && m_sleepPreventionAssertionID) {
+        IOPMAssertionRelease(m_sleepPreventionAssertionID);
+    }
+
 	if (m_autoShowHideCursor) {
 		showCursor();
 	}
@@ -865,6 +886,10 @@ OSXScreen::enter()
 bool
 OSXScreen::leave()
 {
+    if(m_isPrimary && IsSecureEventInputEnabled()) {
+        createSecureInputNotification();
+    }
+
     hideCursor();
     
 	if (isDraggingStarted()) {
@@ -1437,10 +1462,9 @@ OSXScreen::mapMacButtonToSynergy(UInt16 macButton) const
 SInt32
 OSXScreen::mapScrollWheelToSynergy(SInt32 x) const
 {
-	// return accelerated scrolling but not exponentially scaled as it is
-	// on the mac.
-	double d = (1.0 + getScrollSpeed()) * x / getScrollSpeedFactor();
-	return static_cast<SInt32>(120.0 * d);
+	// return accelerated scrolling
+	double d = (1.0 + getScrollSpeed()) * x;
+	return static_cast<SInt32>(m_scrollDirection * 120.0 * d);
 }
 
 SInt32
@@ -1448,7 +1472,7 @@ OSXScreen::mapScrollWheelFromSynergy(SInt32 x) const
 {
 	// use server's acceleration with a little boost since other platforms
 	// take one wheel step as a larger step than the mac does.
-	return static_cast<SInt32>(3.0 * x / 120.0);
+	return static_cast<SInt32>(m_scrollDirection * 3.0 * x / 120.0);
 }
 
 double
@@ -1475,12 +1499,6 @@ OSXScreen::getScrollSpeed() const
 	}
 
 	return scaling;
-}
-
-double
-OSXScreen::getScrollSpeedFactor() const
-{
-	return pow(10.0, getScrollSpeed());
 }
 
 void
@@ -2132,6 +2150,100 @@ OSXScreen::waitForCarbonLoop() const
 	LOG((CLOG_DEBUG "carbon loop ready"));
 #endif
 
+}
+
+String
+OSXScreen::getSecureInputApp() const
+{
+	if(IsSecureEventInputEnabled()) {
+		int secureInputProcessPID = getSecureInputEventPID();
+		if(secureInputProcessPID == 0) return "unknown";
+		return getProcessName(secureInputProcessPID);
+	}
+	return "";
+}
+
+void
+createSecureInputNotification()
+{
+    int secureInputProcessPID = getSecureInputEventPID();
+    String app = getProcessName(secureInputProcessPID);
+    if(secureInputProcessPID == 0) app = "unknown";
+
+    String secureInputNotificationBody =
+            "'Secure input' enabled by " + app + ". " \
+            "Close " + app + " to continue using keyboards on the clients.";
+
+    // display this notification on the server
+    AppUtil::instance().showNotification(
+                "The client keyboards may stop working.",
+                secureInputNotificationBody);
+}
+
+int
+getSecureInputEventPID()
+{
+    io_service_t		service = MACH_PORT_NULL, service_root = MACH_PORT_NULL;
+    mach_port_t			masterPort;
+
+    kern_return_t kr = IOMasterPort( MACH_PORT_NULL, &masterPort );
+    if(kr != KERN_SUCCESS) return 0;
+
+    // IO registry refuses to tap into the root level directly
+    // as a workaround access the parent of the top user level
+    service = IORegistryEntryFromPath( masterPort, kIOServicePlane ":/" );
+    IORegistryEntryGetParentEntry(service, kIOServicePlane, &service_root);
+
+    std::unique_ptr<std::remove_pointer<CFTypeRef>::type, decltype(&CFRelease)> consoleUsers(
+        IORegistryEntrySearchCFProperty(service_root, kIOServicePlane, CFSTR("IOConsoleUsers"), NULL, kIORegistryIterateParents | kIORegistryIterateRecursively),
+        CFRelease
+    );
+    if(!consoleUsers) return 0;
+
+    CFTypeID type = CFGetTypeID(consoleUsers.get());
+    if(type != CFArrayGetTypeID()) return 0;
+
+    CFTypeRef dict = CFArrayGetValueAtIndex((CFArrayRef)consoleUsers.get(), 0);
+    if(!dict) return 0;
+
+    type = CFGetTypeID(dict);
+    if(type != CFDictionaryGetTypeID()) return 0;
+
+    CFTypeRef secureInputPID = nullptr;
+    CFDictionaryGetValueIfPresent((CFDictionaryRef)dict, CFSTR("kCGSSessionSecureInputPID"), &secureInputPID);
+
+    if(secureInputPID == nullptr) return 0;
+
+    type = CFGetTypeID(secureInputPID);
+    if(type != CFNumberGetTypeID()) return 0;
+
+    auto pidRef = (CFNumberRef)secureInputPID;
+    CFNumberType numberType = CFNumberGetType(pidRef);
+    if(numberType != kCFNumberSInt32Type) return 0;
+
+    int pid;
+    CFNumberGetValue(pidRef, kCFNumberSInt32Type, &pid);
+    return pid;
+}
+
+String
+getProcessName(int pid)
+{
+    if(!pid) return "";
+    char buf[128];
+    proc_name(pid, buf, sizeof(buf));
+    return buf;
+}
+
+void
+OSXScreen::updateScrollDirection()
+{
+	if(m_shouldUpdateScrollDirection)
+	{
+		LOG((CLOG_DEBUG "updated scrolling direction"));
+		m_scrollDirection = [[[NSUserDefaults standardUserDefaults] objectForKey:@"com.apple.swipescrolldirection"] boolValue] ? -1 : 1;
+		m_shouldUpdateScrollDirection = false;
+	}
 }
 
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"

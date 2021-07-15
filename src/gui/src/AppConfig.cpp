@@ -28,6 +28,7 @@
 #include "ConfigWriter.h"
 #include "SslCertificate.h"
 
+using GUI::Config::ConfigWriter;
 #if defined(Q_OS_WIN)
 const char AppConfig::m_SynergysName[] = "synergys.exe";
 const char AppConfig::m_SynergycName[] = "synergyc.exe";
@@ -76,6 +77,7 @@ const char* AppConfig::m_SynergySettingsName[] = {
         "serverHostname",
         "tlsCertPath",
         "tlsKeyLength",
+        "preventSleep"
 };
 
 static const char* logLevelNames[] =
@@ -111,35 +113,20 @@ AppConfig::AppConfig() :
     m_LoadFromSystemScope()
 {
 
-    using GUI::Config::ConfigWriter;
-
     auto writer = ConfigWriter::make();
 
     //Register this class to receive global load and saves
     writer->registerClass(this);
-    //User settings exist and the load from system scope variable is true
-    if (writer->hasSetting(settingName(kLoadSystemSettings), ConfigWriter::kUser) &&
-        writer->loadSetting(settingName(kLoadSystemSettings), false, ConfigWriter::kUser).toBool())
-    {
-        writer->setScope(ConfigWriter::kSystem);
-    }
-    //If user setting don't exist but system ones do, load the system settings
-    else if (!writer->hasSetting(settingName(kScreenName), ConfigWriter::kUser) &&
-             writer->hasSetting(settingName(kScreenName), ConfigWriter::kSystem))
-    {
-        writer->setScope(ConfigWriter::kSystem);
-    } else { // Otherwise just load to user scope
-        writer->setScope(ConfigWriter::kUser);
-    }
-
-    //Notify registered classes to reload
     writer->globalLoad();
 
-}
-
-AppConfig::~AppConfig()
-{
-    saveSettings();
+    //User settings exist and the load from system scope variable is true
+    if (writer->hasSetting(settingName(kLoadSystemSettings), ConfigWriter::kUser)) {
+        setLoadFromSystemScope(m_LoadFromSystemScope);
+    }
+    //If user setting don't exist but system ones do, load the system settings
+    else if (writer->hasSetting(settingName(kScreenName), ConfigWriter::kSystem)) {
+        setLoadFromSystemScope(true);
+    }
 }
 
 const QString &AppConfig::screenName() const { return m_ScreenName; }
@@ -201,7 +188,7 @@ const QString &AppConfig::language() const { return m_Language; }
 bool AppConfig::startedBefore() const { return m_StartedBefore; }
 
 bool AppConfig::autoConfig() const {
-#ifndef SYNERGY_ENTERPRISE
+#if !defined(SYNERGY_ENTERPRISE) && defined(SYNERGY_AUTOCONFIG)
     return m_AutoConfig;
 #else
     // always disable auto config for enterprise edition.
@@ -214,12 +201,16 @@ QString AppConfig::autoConfigServer() const { return m_AutoConfigServer; }
 void AppConfig::loadSettings()
 {
     m_ScreenName        = loadSetting(kScreenName, QHostInfo::localHostName()).toString();
+    if (m_ScreenName.isEmpty()) {
+       m_ScreenName = QHostInfo::localHostName();
+    }
+
     m_Port              = loadSetting(kPort, 24800).toInt();
     m_Interface         = loadSetting(kInterfaceSetting).toString();
     m_LogLevel          = loadSetting(kLogLevel, 0).toInt();
     m_LogToFile         = loadSetting(kLogToFile, false).toBool();
     m_LogFilename       = loadSetting(kLogFilename, synergyLogDir() + "synergy.log").toString();
-    m_WizardLastRun     = loadSetting(kWizardLastRun, 0).toInt();
+    m_WizardLastRun     = loadCommonSetting(kWizardLastRun, 0).toInt();
     m_Language          = loadSetting(kLanguage, QLocale::system().name()).toString();
     m_StartedBefore     = loadSetting(kStartedBefore, false).toBool();
     m_AutoConfig        = loadSetting(kAutoConfig, false).toBool();
@@ -242,17 +233,18 @@ void AppConfig::loadSettings()
     m_LastExpiringWarningTime   = loadSetting(kLastExpireWarningTime, 0).toInt();
     m_ActivationHasRun          = loadSetting(kActivationHasRun, false).toBool();
     m_MinimizeToTray            = loadSetting(kMinimizeToTray, false).toBool();
-    m_LoadFromSystemScope       = loadSetting(kLoadSystemSettings, false).toBool();
+    m_LoadFromSystemScope       = loadCommonSetting(kLoadSystemSettings, false).toBool();
     m_ServerGroupChecked        = loadSetting(kGroupServerCheck, false).toBool();
     m_UseExternalConfig         = loadSetting(kUseExternalConfig, false).toBool();
     m_ConfigFile                = loadSetting(kConfigFile, QDir::homePath() + "/" + synergyConfigName).toString();
     m_UseInternalConfig         = loadSetting(kUseInternalConfig, false).toBool();
-    m_ClientGroupChecked        = loadSetting(kGroupClientCheck, true).toBool();
+    m_ClientGroupChecked        = loadSetting(kGroupClientCheck, false).toBool();
     m_ServerHostname            = loadSetting(kServerHostname).toString();
+    m_PreventSleep              = loadSetting(kPreventSleep, false).toBool();
 
     //only change the serial key if the settings being loaded contains a key
-    bool updateSerial = GUI::Config::ConfigWriter::make()
-            ->hasSetting(settingName(kLoadSystemSettings),GUI::Config::ConfigWriter::kCurrent);
+    bool updateSerial = ConfigWriter::make()
+            ->hasSetting(settingName(kLoadSystemSettings),ConfigWriter::kCurrent);
     //if the setting exists and is not empty
     updateSerial = updateSerial && !loadSetting(kSerialKey, "").toString().trimmed().isEmpty();
 
@@ -277,36 +269,40 @@ void AppConfig::loadSettings()
 
 void AppConfig::saveSettings()
 {
-    setSetting(kScreenName, m_ScreenName);
-    setSetting(kPort, m_Port);
-    setSetting(kInterfaceSetting, m_Interface);
-    setSetting(kLogLevel, m_LogLevel);
-    setSetting(kLogToFile, m_LogToFile);
-    setSetting(kLogFilename, m_LogFilename);
-    setSetting(kWizardLastRun, kWizardVersion);
-    setSetting(kLanguage, m_Language);
-    setSetting(kStartedBefore, m_StartedBefore);
-    setSetting(kAutoConfig, m_AutoConfig);
-    setSetting(kAutoConfigServer, m_AutoConfigServer);
-    // Refer to enum ElevateMode declaration for insight in to why this
-    // flag is mapped this way
-    setSetting(kElevateModeSetting, m_ElevateMode == ElevateAlways);
-    setSetting(kElevateModeEnum, static_cast<int>(m_ElevateMode));
-    setSetting(kEditionSetting, m_Edition);
-    setSetting(kCryptoEnabled, m_CryptoEnabled);
-    setSetting(kAutoHide, m_AutoHide);
-    setSetting(kSerialKey, m_Serialkey);
-    setSetting(kLastVersion, m_lastVersion);
-    setSetting(kLastExpireWarningTime, m_LastExpiringWarningTime);
-    setSetting(kActivationHasRun, m_ActivationHasRun);
-    setSetting(kMinimizeToTray, m_MinimizeToTray);
-    setSetting(kLoadSystemSettings, m_LoadFromSystemScope);
-    setSetting(kGroupServerCheck, m_ServerGroupChecked);
-    setSetting(kUseExternalConfig, m_UseExternalConfig);
-    setSetting(kConfigFile, m_ConfigFile);
-    setSetting(kUseInternalConfig, m_UseInternalConfig);
-    setSetting(kGroupClientCheck, m_ClientGroupChecked);
-    setSetting(kServerHostname, m_ServerHostname);
+    setCommonSetting(kWizardLastRun, m_WizardLastRun);
+    setCommonSetting(kLoadSystemSettings, m_LoadFromSystemScope);
+
+    if (isWritable()) {
+        setSetting(kScreenName, m_ScreenName);
+        setSetting(kPort, m_Port);
+        setSetting(kInterfaceSetting, m_Interface);
+        setSetting(kLogLevel, m_LogLevel);
+        setSetting(kLogToFile, m_LogToFile);
+        setSetting(kLogFilename, m_LogFilename);
+        setSetting(kLanguage, m_Language);
+        setSetting(kStartedBefore, m_StartedBefore);
+        setSetting(kAutoConfig, m_AutoConfig);
+        setSetting(kAutoConfigServer, m_AutoConfigServer);
+        // Refer to enum ElevateMode declaration for insight in to why this
+        // flag is mapped this way
+        setSetting(kElevateModeSetting, m_ElevateMode == ElevateAlways);
+        setSetting(kElevateModeEnum, static_cast<int>(m_ElevateMode));
+        setSetting(kEditionSetting, m_Edition);
+        setSetting(kCryptoEnabled, m_CryptoEnabled);
+        setSetting(kAutoHide, m_AutoHide);
+        setSetting(kSerialKey, m_Serialkey);
+        setSetting(kLastVersion, m_lastVersion);
+        setSetting(kLastExpireWarningTime, m_LastExpiringWarningTime);
+        setSetting(kActivationHasRun, m_ActivationHasRun);
+        setSetting(kMinimizeToTray, m_MinimizeToTray);
+        setSetting(kGroupServerCheck, m_ServerGroupChecked);
+        setSetting(kUseExternalConfig, m_UseExternalConfig);
+        setSetting(kConfigFile, m_ConfigFile);
+        setSetting(kUseInternalConfig, m_UseInternalConfig);
+        setSetting(kGroupClientCheck, m_ClientGroupChecked);
+        setSetting(kServerHostname, m_ServerHostname);
+        setSetting(kPreventSleep, m_PreventSleep);
+    }
 
     m_unsavedChanges = false;
 }
@@ -388,12 +384,14 @@ void AppConfig::setAutoConfigServer(const QString& autoConfigServer)
 #ifndef SYNERGY_ENTERPRISE
 void AppConfig::setEdition(Edition e) {
     setSettingModified(m_Edition, e);
+    setCommonSetting(kEditionSetting, m_Edition);
 }
 
 Edition AppConfig::edition() const { return m_Edition; }
 
 void AppConfig::setSerialKey(const QString& serial) {
     setSettingModified(m_Serialkey, serial);
+    setCommonSetting(kSerialKey, m_Serialkey);
 }
 
 void AppConfig::clearSerialKey()
@@ -423,6 +421,9 @@ void AppConfig::setCryptoEnabled(bool newValue) {
     if (m_CryptoEnabled != newValue && newValue){
         generateCertificate();
     }
+    else {
+        emit sslToggled();
+    }
     setSettingModified(m_CryptoEnabled, newValue);
 }
 
@@ -430,7 +431,7 @@ bool AppConfig::isCryptoAvailable() const {
     bool result {true};
 
 #ifndef SYNERGY_ENTERPRISE
-    result = (edition() == kPro || edition() == kBusiness);
+    result = (edition() == kPro || edition() == kPro_China || edition() == kBusiness);
 #endif
 
     return result;
@@ -450,6 +451,18 @@ void AppConfig::setMinimizeToTray(bool newValue) {
     setSettingModified(m_MinimizeToTray, newValue);
 }
 
+bool AppConfig::getLanguageSync() const { return m_LanguageSync; }
+
+void AppConfig::setLanguageSync(bool newValue) {
+    setSettingModified(m_LanguageSync, newValue);
+}
+
+bool AppConfig::getPreventSleep() const { return m_PreventSleep; }
+
+void AppConfig::setPreventSleep(bool newValue) {
+    setSettingModified(m_PreventSleep, newValue);
+}
+
 bool AppConfig::getMinimizeToTray() { return m_MinimizeToTray; }
 
 QString AppConfig::settingName(AppConfig::Setting name) {
@@ -458,48 +471,73 @@ QString AppConfig::settingName(AppConfig::Setting name) {
 
 template<typename T>
 void AppConfig::setSetting(AppConfig::Setting name, T value) {
-    using GUI::Config::ConfigWriter;
     ConfigWriter::make()->setSetting(settingName(name), value);
 }
 
+template<typename T>
+void AppConfig::setCommonSetting(AppConfig::Setting name, T value) {
+    ConfigWriter::make()->setSetting(settingName(name), value, ConfigWriter::kUser);
+    ConfigWriter::make()->setSetting(settingName(name), value, ConfigWriter::kSystem);
+}
+
 QVariant AppConfig::loadSetting(AppConfig::Setting name, const QVariant& defaultValue) {
-    using GUI::Config::ConfigWriter;
     return ConfigWriter::make()->loadSetting(settingName(name), defaultValue);
 }
 
+QVariant AppConfig::loadCommonSetting(AppConfig::Setting name, const QVariant& defaultValue) const {
+    QVariant result(defaultValue);
+    QString setting(settingName(name));
+    auto& writer = *ConfigWriter::make();
+
+    if (writer.hasSetting(setting)) {
+        result = writer.loadSetting(setting, defaultValue);
+    }
+    else if (writer.getScope() == ConfigWriter::kSystem ) {
+        if (writer.hasSetting(setting, ConfigWriter::kUser)) {
+            result = writer.loadSetting(setting, defaultValue, ConfigWriter::kUser);
+        }
+    }
+    else if (writer.hasSetting(setting, ConfigWriter::kSystem)){
+        result = writer.loadSetting(setting, defaultValue, ConfigWriter::kSystem);
+    }
+
+    return result;
+}
+
+void AppConfig::loadScope(ConfigWriter::Scope scope) const {
+   auto writer = ConfigWriter::make();
+
+   if (writer->getScope() != scope) {
+      writer->setScope(scope);
+      if (writer->hasSetting(settingName(kScreenName), writer->getScope())) {
+          //If the user already has settings, then load them up now.
+          writer->globalLoad();
+      }
+   }
+}
 
 void AppConfig::setLoadFromSystemScope(bool value) {
-    using GUI::Config::ConfigWriter;
 
-    auto writer = ConfigWriter::make();
+   if (value) {
+      loadScope(ConfigWriter::kSystem);
+   }
+   else {
+      loadScope(ConfigWriter::kUser);
+   }
 
-    if (value && writer->getScope() != ConfigWriter::kSystem)
-    {
-        m_LoadFromSystemScope = value;
-        m_unsavedChanges = true;
-        writer->globalSave();     //Save user prefs
-        writer->setScope(ConfigWriter::kSystem);   //Switch the the System Scope
-        //If the system scope has settings, trigger a global reload, otherwise keep the current users settings
-        if (writer->hasSetting(settingName(kScreenName), ConfigWriter::kUser)) {
-            // If the system already has settings, then load them up now.
-            writer->globalLoad();
-        }
-    }
-    else if (!value && writer->getScope() == ConfigWriter::kSystem)
-    {
-        writer->setScope(ConfigWriter::kUser);      // Switch to UserScope
-        if (writer->hasSetting(settingName(kScreenName), ConfigWriter::kUser)) {
-            // If the user already has settings, then load them up now.
-            writer->globalLoad();
-        }
-        m_LoadFromSystemScope = value;
-        m_unsavedChanges = true;
-        writer->globalSave();                // Save user prefs
-    }
+   /*
+    * It's very imprortant to set this variable after loadScope
+    * because during scope loading this variable can be rewritten with old value
+   */
+   m_LoadFromSystemScope = value;
+}
+
+bool  AppConfig::isWritable() const {
+    return ConfigWriter::make()->isWritable();
 }
 
 bool AppConfig::isSystemScoped() const {
-    return GUI::Config::ConfigWriter::make()->getScope() == GUI::Config::ConfigWriter::kSystem;
+    return ConfigWriter::make()->getScope() == ConfigWriter::kSystem;
 }
 
 bool AppConfig::getServerGroupChecked() const {
@@ -510,7 +548,7 @@ bool AppConfig::getUseExternalConfig() const {
     return m_UseExternalConfig;
 }
 
-QString AppConfig::getConfigFile() const {
+const QString& AppConfig::getConfigFile() const {
     return m_ConfigFile;
 }
 

@@ -48,8 +48,10 @@ steps:
   - task: PowerShell@2
     inputs:
       targetType: 'inline'
-      script: choco install openssl -y --forcex64 --no-progress
-    displayName: 'Installing OpenSSL (full) (x64)'
+      script: |
+        choco install openssl -y --forcex64 --no-progress
+        Copy-Item -Path "C:\\Program Files\\OpenSSL-Win64" -Destination "$(Build.Repository.LocalPath)\\ext\\openssl\\windows\\x64" -Recurse
+    displayName: 'Installing OpenSSL (x64)'
 
   - script: |
       call "%ENV_BAT%" -arch=x64
@@ -57,17 +59,17 @@ steps:
       mkdir build64
       cd build64
       IF "$(buildType)"=="enterprise" (
-        cmake -G "Visual Studio 16 2019" -A %MSARCH% -V -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=%QT_PATH% -DSYNERGY_ENTERPRISE=ON ..
+          cmake -G "Visual Studio 16 2019" -A %MSARCH% -DCMAKE_BUILD_TYPE=Release -DSYNERGY_ENTERPRISE=ON ..
       ) else (
-        cmake -G "Visual Studio 16 2019" -A %MSARCH% -V -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=%QT_PATH% ..
+          cmake -G "Visual Studio 16 2019" -A %MSARCH% -DCMAKE_BUILD_TYPE=Release ..
       )
     displayName: 'Cmake x64 Standard'
     env:
       ENV_BAT: $(ENV_BAT)
       BONJOUR_SDK_DIR: $(BONJOUR_SDK_DIR)
-      QT_PATH: $(QT_BIN_PATH)
       MSARCH: 'x64'
       GIT_COMMIT: $(Build.SourceVersion)
+      CMAKE_PREFIX_PATH: "$(QT_BIN_PATH);$(Build.Repository.LocalPath)\\ext\\openssl\\windows\\x64"
 
   - script: |
       call "%ENV_BAT%" -arch=x64
@@ -85,7 +87,8 @@ steps:
       script: |
         choco uninstall openssl -y --ignore-autouninstaller-failure --no-progress
         choco install openssl -y --forcex86 --no-progress
-    displayName: 'Installing OpenSSL (full) (x32)'
+        Copy-Item -Path "C:\\Program Files (x86)\\OpenSSL-Win32" -Destination "$(Build.Repository.LocalPath)\\ext\\openssl\\windows\\x86" -Recurse
+    displayName: 'Installing OpenSSL (x86)'
 
   - script: |
       call "%ENV_BAT%" -arch=x86
@@ -93,17 +96,17 @@ steps:
       mkdir build32
       cd build32
       IF "$(buildType)"=="enterprise" (
-        cmake -G "Visual Studio 16 2019" -A %MSARCH% -V -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=%QT_PATH% -DSYNERGY_ENTERPRISE=ON ..
+         cmake -G "Visual Studio 16 2019" -A %MSARCH% -DCMAKE_BUILD_TYPE=Release -DSYNERGY_ENTERPRISE=ON ..
       ) else (
-        cmake -G "Visual Studio 16 2019" -A %MSARCH% -V -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=%QT_PATH% ..
+         cmake -G "Visual Studio 16 2019" -A %MSARCH% -DCMAKE_BUILD_TYPE=Release ..
       )
     displayName: 'Cmake x32 Standard'
     env:
       ENV_BAT: $(ENV_BAT)
       BONJOUR_SDK_DIR: $(BONJOUR_SDK_DIR)
-      QT_PATH: $(QT_BIN_PATH_32)
       MSARCH: 'Win32'
       GIT_COMMIT: $(Build.SourceVersion)
+      CMAKE_PREFIX_PATH: "$(QT_BIN_PATH_32);$(Build.Repository.LocalPath)\\ext\\openssl\\windows\\x86"
 
   - script: |
       call "%ENV_BAT%" -arch=x86

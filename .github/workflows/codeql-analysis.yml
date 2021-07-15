@@ -18,8 +18,6 @@ on:
   pull_request:
     # The branches below must be a subset of the branches above
     branches: [ master ]
-  schedule:
-    - cron: '28 21 * * 0'
 
 jobs:
   analyze:
@@ -49,7 +47,7 @@ jobs:
         # queries: ./path/to/local/query, your-org/your-repo/queries@main
 
     - run: |
-        sudo sh -c 'export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get upgrade -y && apt-get install -y \
+        sudo sh -c 'export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -y \
           git \
           cmake \
           qtbase5-dev \
@@ -63,6 +61,9 @@ jobs:
           devscripts \
           qttools5-dev \
           qttools5-dev-tools \
+          libnotify-dev \
+          libglib2.0-dev \
+          libgdk-pixbuf2.0-dev \
           && rm -rf /var/lib/apt/lists'
 
     # Autobuild attempts to build any compiled languages  (C/C++, C#, or Java).

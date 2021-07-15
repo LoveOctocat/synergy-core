@@ -35,7 +35,6 @@ Screen::Screen(IPlatformScreen* platformScreen, IEventQueue* events) :
     m_isPrimary(platformScreen->isPrimary()),
     m_enabled(false),
     m_entered(m_isPrimary),
-    m_screenSaverSync(true),
     m_fakeInput(false),
     m_events(events),
     m_mock(false),
@@ -115,6 +114,11 @@ Screen::enter(KeyModifierMask toggleMask)
     // now on screen
     m_entered = true;
 
+    // Forcefully update scrolling direction
+    // Will keep clients updated when moving cursor
+    m_screen->allowScrollDirectionUpdate();
+    m_screen->updateScrollDirection();
+
     m_screen->enter();
     if (m_isPrimary) {
         enterPrimary();
@@ -129,6 +133,11 @@ Screen::leave()
 {
     assert(m_entered == true);
     LOG((CLOG_INFO "leaving screen"));
+
+    // Forcefully update scrolling direction
+    // Will keep server updated when moving cursor
+    m_screen->allowScrollDirectionUpdate();
+    m_screen->updateScrollDirection();
 
     if (!m_screen->leave()) {
         return false;
@@ -176,14 +185,9 @@ Screen::grabClipboard(ClipboardID id)
 }
 
 void
-Screen::screensaver(bool activate)
+Screen::screensaver(bool) const
 {
-    if (!m_isPrimary) {
-        // activate/deactivation screen saver iff synchronization enabled
-        if (m_screenSaverSync) {
-            m_screen->screensaver(activate);
-        }
-    }
+    // do nothing
 }
 
 void
@@ -218,6 +222,11 @@ Screen::keyUp(KeyID, KeyModifierMask, KeyButton button)
 void
 Screen::mouseDown(ButtonID button)
 {
+	// No other convinient way to check if scroll direction was changed
+	// If mouse button is pressed is good enough indication to allow checking
+	// for scroll direction
+	m_screen->allowScrollDirectionUpdate();
+
     m_screen->fakeMouseButton(button, true);
 }
 
@@ -245,6 +254,9 @@ void
 Screen::mouseWheel(SInt32 xDelta, SInt32 yDelta)
 {
     assert(!m_isPrimary);
+    // update scroll direction if necessary
+    m_screen->updateScrollDirection();
+
     m_screen->fakeMouseWheel(xDelta, yDelta);
 }
 
@@ -254,15 +266,6 @@ Screen::resetOptions()
     // reset options
     m_halfDuplex = 0;
 
-    // if screen saver synchronization was off then turn it on since
-    // that's the default option state.
-    if (!m_screenSaverSync) {
-        m_screenSaverSync = true;
-        if (!m_isPrimary) {
-            m_screen->openScreensaver(false);
-        }
-    }
-
     // let screen handle its own options
     m_screen->resetOptions();
 }
@@ -271,13 +274,8 @@ void
 Screen::setOptions(const OptionsList& options)
 {
     // update options
-    bool oldScreenSaverSync = m_screenSaverSync;
     for (UInt32 i = 0, n = (UInt32)options.size(); i < n; i += 2) {
-        if (options[i] == kOptionScreenSaverSync) {
-            m_screenSaverSync = (options[i + 1] != 0);
-            LOG((CLOG_DEBUG1 "screen saver synchronization %s", m_screenSaverSync ? "on" : "off"));
-        }
-        else if (options[i] == kOptionHalfDuplexCapsLock) {
+        if (options[i] == kOptionHalfDuplexCapsLock) {
             if (options[i + 1] != 0) {
                 m_halfDuplex |=  KeyModifierCapsLock;
             }
@@ -308,16 +306,6 @@ Screen::setOptions(const OptionsList& options)
 
     // update half-duplex options
     m_screen->setHalfDuplexMask(m_halfDuplex);
-
-    // update screen saver synchronization
-    if (!m_isPrimary && oldScreenSaverSync != m_screenSaverSync) {
-        if (m_screenSaverSync) {
-            m_screen->openScreensaver(false);
-        }
-        else {
-            m_screen->closeScreensaver();
-        }
-    }
 
     // let screen handle its own options
     m_screen->setOptions(options);
@@ -508,10 +496,6 @@ Screen::enableSecondary()
         grabClipboard(id);
     }
 
-    // disable the screen saver if synchronization is enabled
-    if (m_screenSaverSync) {
-        m_screen->openScreensaver(false);
-    }
 }
 
 void
@@ -554,6 +538,12 @@ Screen::leaveSecondary()
 {
     // release any keys we think are still down
     m_screen->fakeAllKeysUp();
+}
+
+String
+Screen::getSecureInputApp() const
+{
+    return m_screen->getSecureInputApp();
 }
 
 }

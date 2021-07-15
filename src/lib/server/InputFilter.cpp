@@ -497,7 +497,7 @@ InputFilter::KeyboardBroadcastAction::format() const
     }
     else {
         return synergy::string::sprintf("%s(%s,%.*s)", s_name, s_mode[m_mode],
-                            m_screens.size() - 2,
+                            static_cast<int>(m_screens.size() >= 2 ? m_screens.size() - 2 : 0),
                             m_screens.c_str() + 1);
     }
 }
@@ -578,7 +578,7 @@ InputFilter::KeystrokeAction::format() const
         return synergy::string::sprintf("%s(%s,%.*s)", type,
                             synergy::KeyMap::formatKey(m_keyInfo->m_key,
                                 m_keyInfo->m_mask).c_str(),
-                            strlen(m_keyInfo->m_screens + 1) - 1,
+                            strnlen(m_keyInfo->m_screens + 1, SIZE_MAX) - 1,
                             m_keyInfo->m_screens + 1);
     }
 }

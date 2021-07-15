@@ -28,6 +28,8 @@
 #include "ui_MainWindowBase.h"
 
 #include "ServerConfig.h"
+#include "ServerConnection.h"
+#include "ClientConnection.h"
 #include "AppConfig.h"
 #include "VersionChecker.h"
 #include "IpcClient.h"
@@ -67,6 +69,8 @@ class MainWindow : public QMainWindow, public Ui::MainWindowBase
     friend class SetupWizard;
     friend class ActivationDialog;
     friend class SettingsDialog;
+    friend class ServerConnection;
+    friend class ClientConnection;
 
     public:
         enum qSynergyState
@@ -105,7 +109,7 @@ class MainWindow : public QMainWindow, public Ui::MainWindowBase
 
     public:
         void setVisible(bool visible);
-        int synergyType() const { return m_pGroupClient->isChecked() ? synergyClient : synergyServer; }
+        int synergyType() const { return m_pRadioGroupClient->isChecked() ? synergyClient : synergyServer; }
         int synergyState() const { return m_SynergyState; }
         QString hostname() const { return m_pLineEditHostname->text(); }
         QString configFilename();
@@ -114,7 +118,6 @@ class MainWindow : public QMainWindow, public Ui::MainWindowBase
         void open();
         void clearLog();
         VersionChecker& versionChecker() { return m_VersionChecker; }
-        QString getScreenName();
         ServerConfig& serverConfig() { return m_ServerConfig; }
         void showConfigureServer(const QString& message);
         void showConfigureServer() { showConfigureServer(""); }
@@ -140,13 +143,14 @@ public slots:
         void appendLogError(const QString& text);
         void startSynergy();
         void retryStart(); // If the connection failed this will retry a startSynergy
+        void actionStart();
+        void handleIdleService(const QString& text);
 
     protected slots:
         void updateLocalFingerprint();
         void updateScreenName();
-        void on_m_pGroupClient_toggled(bool on);
-        void on_m_pGroupServer_toggled(bool on);
-        bool on_m_pButtonBrowseConfigFile_clicked();
+        void on_m_pRadioGroupServer_clicked(bool);
+        void on_m_pRadioGroupClient_clicked(bool);
         void on_m_pButtonConfigureServer_clicked();
         bool on_m_pActionSave_triggered();
         void on_m_pActionAbout_triggered();
@@ -189,6 +193,8 @@ public slots:
         void stopDesktop();
         void changeEvent(QEvent* event);
         void retranslateMenuBar();
+        void enableServer(bool enable);
+        void enableClient(bool enable);
 
 #if defined(Q_OS_WIN)
         bool isServiceRunning(QString name);
@@ -200,6 +206,9 @@ public slots:
         void checkConnected(const QString& line);
         void checkFingerprint(const QString& line);
         void checkSecureSocket(const QString& line);
+#ifdef Q_OS_MAC
+        void checkOSXNotification(const QString& line);
+#endif
 #ifndef SYNERGY_ENTERPRISE
         void checkLicense(const QString& line);
 #endif
@@ -236,9 +245,10 @@ public slots:
         TrayIcon            m_trayIcon;
         qRuningState        m_ExpectedRunningState;
         QMutex              m_StopDesktopMutex;
-        SslCertificate*     m_pSslCertificate;
         bool                m_SecureSocket;             // brief Is the program running a secure socket protocol (SSL/TLS)
         QString             m_SecureSocketVersion;      // brief Contains the version of the Secure Socket currently active
+        ServerConnection    m_serverConnection;
+        ClientConnection    m_clientConnection;
 
         void                updateAutoConfigWidgets();
         
@@ -246,9 +256,11 @@ private slots:
     void on_m_pButtonApply_clicked();
     void on_windowShown();
 
-    void on_m_pLabelAutoConfig_linkActivated(const QString &link);
-
+    void on_m_pLabelComputerName_linkActivated(const QString &link);
+    void on_m_pLabelFingerprint_linkActivated(const QString& link);
     void on_m_pComboServerList_currentIndexChanged(const QString &arg1);
+
+    void on_m_pButtonConnect_clicked();
 
 signals:
     void windowShown();

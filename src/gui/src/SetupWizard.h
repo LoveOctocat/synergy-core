@@ -16,38 +16,26 @@
  */
 
 #pragma once
-
+#include <memory>
 #include "ui_SetupWizardBase.h"
-#include "SynergyLocale.h"
-
-#include <QWizard>
-#include <QNetworkAccessManager>
+#include <QDialog>
 
 class MainWindow;
 
-class SetupWizard : public QWizard, public Ui::SetupWizardBase
+class SetupWizard : public QDialog, public Ui::SetupWizardBase
 {
-    Q_OBJECT
-public:
-    enum {
-        kMaximiumLoginAttemps = 3
-    };
+   Q_OBJECT
 
 public:
-    SetupWizard(MainWindow& mainWindow, bool startMain);
-    virtual ~SetupWizard();
-    bool validateCurrentPage();
+   explicit SetupWizard(MainWindow& mainWindow);
 
 protected:
-    void changeEvent(QEvent* event);
-    void accept();
-    void reject();
+   void accept();
+   void reject();
 
 private:
-    MainWindow& m_MainWindow;
-    bool m_StartMain;
-    SynergyLocale m_Locale;
+   MainWindow& m_MainWindow;
 
 private slots:
-    void on_m_pComboLanguage_currentIndexChanged(int index);
+   void onNameChanged();
 };

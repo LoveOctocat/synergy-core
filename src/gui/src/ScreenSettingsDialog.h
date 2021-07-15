@@ -19,6 +19,7 @@
 #if !defined(SCREENSETTINGSDIALOG__H)
 
 #define SCREENSETTINGSDIALOG__H
+#include <memory>
 
 #include <QDialog>
 
@@ -28,13 +29,14 @@ class QWidget;
 class QString;
 
 class Screen;
+class ScreenList;
 
 class ScreenSettingsDialog : public QDialog, public Ui::ScreenSettingsDialogBase
 {
     Q_OBJECT
 
     public:
-        ScreenSettingsDialog(QWidget* parent, Screen* pScreen = NULL);
+        ScreenSettingsDialog(QWidget* parent, Screen* pScreen = nullptr, const ScreenList* pScreens = nullptr);
 
     public slots:
         void accept();
@@ -47,6 +49,7 @@ class ScreenSettingsDialog : public QDialog, public Ui::ScreenSettingsDialogBase
 
     private:
         Screen* m_pScreen;
+
 };
 
 #endif

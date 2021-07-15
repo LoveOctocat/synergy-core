@@ -511,6 +511,14 @@ Server::switchScreen(BaseClientProxy* dst,
 			}
 		}
 
+		
+#if defined(__APPLE__)
+		String secureInputApplication = m_active->getSecureInputApp();
+		if (m_active == m_primaryClient && secureInputApplication != "") {
+			dst->secureInputNotification(secureInputApplication);
+		}
+#endif
+
 		// cut over
 		m_active = dst;
 
@@ -1294,6 +1302,13 @@ Server::handleClipboardGrabbed(const Event& event, void* vclient)
 			client->grabClipboard(info->m_id);
 		}
 	}
+
+    if (grabber == m_primaryClient && m_active != m_primaryClient) {
+        LOG((CLOG_INFO "clipboard grabbed, but we are already changed active screen. Resend clipboard data"));
+        for (ClipboardID id = 0; id < kClipboardEnd; ++id) {
+            onClipboardChanged(m_primaryClient, id, m_clipboards[id].m_clipboardSeqNum);
+        }
+    }
 }
 
 void
@@ -1562,7 +1577,6 @@ Server::onClipboardChanged(BaseClientProxy* sender,
 	// get data
 	sender->getClipboard(id, &clipboard.m_clipboard);
 
-	// ignore if data hasn't changed
 	String data = clipboard.m_clipboard.marshall();
 	if (data.size() > m_maximumClipboardSize * 1024) {
 		LOG((CLOG_NOTE "not updating clipboard because it's over the size limit (%i KB) configured by the server",
@@ -1570,6 +1584,7 @@ Server::onClipboardChanged(BaseClientProxy* sender,
 		return;
 	}
 
+    // ignore if data hasn't changed
 	if (data == clipboard.m_clipboardData) {
 		LOG((CLOG_DEBUG "ignored screen \"%s\" update of clipboard %d (unchanged)", clipboard.m_clipboardOwner.c_str(), id));
 		return;
@@ -2350,7 +2365,7 @@ Server::SwitchToScreenInfo::alloc(const String& screen)
 	SwitchToScreenInfo* info =
 		(SwitchToScreenInfo*)malloc(sizeof(SwitchToScreenInfo) +
 								screen.size());
-	strcpy(info->m_screen, screen.c_str());
+	strcpy(info->m_screen, screen.c_str()); // Compliant: we made sure the buffer is large enough
 	return info;
 }
 
@@ -2389,7 +2404,7 @@ Server::KeyboardBroadcastInfo::alloc(State state, const String& screens)
 		(KeyboardBroadcastInfo*)malloc(sizeof(KeyboardBroadcastInfo) +
 								screens.size());
 	info->m_state = state;
-	strcpy(info->m_screens, screens.c_str());
+	strcpy(info->m_screens, screens.c_str()); // Compliant: we made sure that screens variable ended with null
 	return info;
 }
 

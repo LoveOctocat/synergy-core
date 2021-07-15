@@ -9,7 +9,6 @@
         <file>image/about.png</file>
         <file>image/about-dark.png</file>
         <file>lang/Languages.xml</file>
-        <file>icons/16x16/money.png</file>
         <file>image/spinning-wheel.gif</file>
         <file>icons/16x16/padlock.png</file>
         <file>icons/16x16/synergy-transfering.png</file>
@@ -19,6 +18,9 @@
         <file>icons/64x64/synergy-light-transfering.png</file>
         <file>icons/64x64/synergy-light-disconnected.png</file>
         <file>icons/64x64/synergy-light-connected.png</file>
-        <file>icons/16x16/auto-config.png</file>
+        <file>image/welcome.png</file>
+        <file>icons/64x64/folder.png</file>
+        <file>fonts/Arial.ttf</file>
+        <file>image/setupBlocker.png</file>
     </qresource>
 </RCC>

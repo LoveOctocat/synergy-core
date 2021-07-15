@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "validators/ScreenNameValidator.h"
+#include "validators/AliasValidator.h"
 #include "ScreenSettingsDialog.h"
 #include "Screen.h"
 
@@ -23,20 +25,18 @@
 #include <QtGui>
 #include <QMessageBox>
 
-ScreenSettingsDialog::ScreenSettingsDialog(QWidget* parent, Screen* pScreen) :
+ScreenSettingsDialog::ScreenSettingsDialog(QWidget* parent, Screen* pScreen,const ScreenList* pScreens) :
     QDialog(parent, Qt::WindowTitleHint | Qt::WindowSystemMenuHint),
     Ui::ScreenSettingsDialogBase(),
     m_pScreen(pScreen)
 {
     setupUi(this);
 
-    QRegExp validScreenName("[a-z0-9\\._-]{,255}", Qt::CaseInsensitive);
-
     m_pLineEditName->setText(m_pScreen->name());
-    m_pLineEditName->setValidator(new QRegExpValidator(validScreenName, m_pLineEditName));
+    m_pLineEditName->setValidator(new validators::ScreenNameValidator(m_pLineEditName, m_pLabelNameError, pScreens));
     m_pLineEditName->selectAll();
 
-    m_pLineEditAlias->setValidator(new QRegExpValidator(validScreenName, m_pLineEditName));
+    m_pLineEditAlias->setValidator(new validators::AliasValidator(m_pLineEditAlias, m_pLabelAliasError));
 
     for (int i = 0; i < m_pScreen->aliases().count(); i++)
         new QListWidgetItem(m_pScreen->aliases()[i], m_pListAliases);
@@ -68,6 +68,9 @@ void ScreenSettingsDialog::accept()
             tr("The screen name cannot be empty. "
                "Please either fill in a name or cancel the dialog."));
         return;
+    }
+    else if (!m_pLabelNameError->text().isEmpty()) {
+       return;
     }
 
     m_pScreen->init();
@@ -119,7 +122,7 @@ void ScreenSettingsDialog::on_m_pButtonAddAlias_clicked()
 
 void ScreenSettingsDialog::on_m_pLineEditAlias_textChanged(const QString& text)
 {
-    m_pButtonAddAlias->setEnabled(!text.isEmpty());
+    m_pButtonAddAlias->setEnabled(!text.isEmpty() && m_pLabelAliasError->text().isEmpty());
 }
 
 void ScreenSettingsDialog::on_m_pButtonRemoveAlias_clicked()

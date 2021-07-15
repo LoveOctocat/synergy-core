@@ -18,11 +18,57 @@
 #include <cassert>
 
 #include <QCoreApplication>
-#include <QMessageBox>
-#include <QPushButton>
+#include <QFile>
 
 #include "ConfigWriter.h"
 #include "ConfigBase.h"
+
+namespace {
+
+QString getSystemSettingPath()
+{
+    const QString settingFilename("SystemConfig.ini");
+    QString path;
+#if defined(Q_OS_WIN)
+    // Program file
+    path = QCoreApplication::applicationDirPath() + "\\";
+#elif defined(Q_OS_DARWIN)
+    //Global preferances dir
+    // Would be nice to use /library, but QT has no elevate system in place
+    path = "/usr/local/etc/symless/";
+#elif defined(Q_OS_LINUX)
+    // QT adds application and filename to the end of the path already on linux
+    path = "/usr/local/etc/symless/";
+    return path;
+#else
+    assert("OS not supported");
+#endif
+    return path + settingFilename;
+}
+
+#if defined(Q_OS_WIN)
+void loadOldSystemSettings(QSettings& settings)
+{
+   if (!QFile(settings.fileName()).exists()) {
+        QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, "SystemConfig.ini");
+        QSettings oldSystemSettings (QSettings::IniFormat,
+                                     QSettings::SystemScope,
+                                     QCoreApplication::organizationName(),
+                                     QCoreApplication::applicationName());
+
+        if (QFile(oldSystemSettings.fileName()).exists()) {
+            for (const auto& key : oldSystemSettings.allKeys()) {
+                settings.setValue(key, oldSystemSettings.value(key));
+            }
+        }
+
+        //Restore system settings path
+        QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, getSystemSettingPath());
+    }
+}
+#endif
+
+}
 
 namespace GUI {
     namespace Config {
@@ -38,7 +84,6 @@ namespace GUI {
             return s_pConfiguration;
         }
 
-
         ConfigWriter::ConfigWriter() {
             QSettings::setPath(QSettings::Format::IniFormat,
                                QSettings::Scope::SystemScope,
@@ -50,6 +95,11 @@ namespace GUI {
                                         QSettings::Scope::SystemScope,
                                              QCoreApplication::organizationName(),
                                              QCoreApplication::applicationName());
+
+            #if defined(Q_OS_WIN)
+            //This call is needed for backwardcapability with old settings.
+            loadOldSystemSettings(*m_pSettingsSystem);
+            #endif
 
             //defaults to user scope, if we set the scope specifically then we also have to set
             // the application name and the organisation name which breaks backwards compatibility
@@ -86,7 +136,9 @@ namespace GUI {
             }
         }
 
-
+        bool ConfigWriter::isWritable() const {
+            return m_pSettingsCurrent->isWritable();
+        }
 
         QVariant ConfigWriter::loadSetting(const QString& name, const QVariant &defaultValue, Scope scope) {
             switch (scope){
@@ -131,22 +183,14 @@ namespace GUI {
 
             //Save if there are any unsaved changes otherwise skip
             if (unsavedChanges()) {
-                auto choice = checkSystemSave();
+               for (auto &i : m_pCallerList) {
+                   i->saveSettings();
+               }
 
-                switch (choice) {
-                    case kSaveToUser:
-                        //Switch to local and overrun into the save case without reloading
-                        m_CurrentScope = kUser;
-                        m_pSettingsCurrent = m_pSettingsUser;
-                    case kSave:
-                        for (auto &i : m_pCallerList) {
-                            i->saveSettings();
-                        }
-                        save();
-                        break;
-                    default:
-                        break;
-                }
+               m_pSettingsUser->sync();
+               m_pSettingsSystem->sync();
+
+               m_unsavedChanges = false;
             }
         }
 
@@ -158,25 +202,7 @@ namespace GUI {
             m_pCallerList.push_back(receiver);
         }
 
-        QString ConfigWriter::getSystemSettingPath()             {
-            const QString settingFilename("SystemConfig.ini");
-            QString path;
-#if defined(Q_OS_WIN)
-            // Program file
-            path = "";
-#elif defined(Q_OS_DARWIN)
-            //Global preferances dir
-            // Would be nice to use /library, but QT has no elevate system in place
-            path = "/usr/local/etc/symless/";
-#elif defined(Q_OS_LINUX)
-            // QT adds application and filename to the end of the path already on linux
-            path = "/usr/local/etc/symless/";
-            return path;
-#else
-            assert("OS not supported");
-#endif
-            return path + settingFilename;
-        }
+
 
         bool ConfigWriter::unsavedChanges() const {
             if (m_unsavedChanges) {
@@ -195,38 +221,6 @@ namespace GUI {
 
         void ConfigWriter::markUnsaved() {
             m_unsavedChanges = true;
-        }
-
-        ConfigWriter::SaveChoice ConfigWriter::checkSystemSave() const {
-            if (m_CurrentScope == kSystem) {
-
-                QMessageBox query;
-                query.setWindowTitle(tr("Save global settings."));
-                query.setText(tr("This will overwrite the settings of anybody else that uses this computer."));
-
-                query.addButton(tr("Save for all users"), QMessageBox::ActionRole);
-                const auto* pBtnCancel    =  query.addButton(tr("Do not save"), QMessageBox::ActionRole);
-                const auto* pBtnSaveLocal =  query.addButton(tr("Save to user"), QMessageBox::ActionRole);
-
-                query.setDefaultButton(QMessageBox::Cancel);
-
-                query.exec();
-
-                if(query.clickedButton() == pBtnSaveLocal)
-                {
-                    return kSaveToUser;
-                }
-                else if(query.clickedButton() == pBtnCancel)
-                {
-                    return kCancel;
-                }
-            }
-            return kSave;
-        }
-
-        void ConfigWriter::save() {
-            m_pSettingsCurrent->sync();
-            m_unsavedChanges = false;
         }
     }
 }

@@ -57,14 +57,6 @@
 #include <ApplicationServices/ApplicationServices.h>
 #endif
 
-#if defined(Q_OS_WIN)
-static const char synergyConfigName[] = "synergy.sgc";
-static const QString synergyConfigFilter(QObject::tr("Synergy Configurations (*.sgc);;All files (*.*)"));
-#else
-static const char synergyConfigName[] = "synergy.conf";
-static const QString synergyConfigFilter(QObject::tr("Synergy Configurations (*.conf);;All files (*.*)"));
-#endif
-
 static const char* tlsCheckString = "network encryption protocol: ";
 
 static const int debugLogLevel = 1;
@@ -111,7 +103,7 @@ MainWindow::MainWindow (AppConfig& appConfig,
     m_AppConfig(&appConfig),
     m_pSynergy(NULL),
     m_SynergyState(synergyDisconnected),
-    m_ServerConfig(5, 3, m_AppConfig->screenName(), this),
+    m_ServerConfig(5, 3, m_AppConfig, this),
     m_AlreadyHidden(false),
     m_pMenuBar(NULL),
     m_pMenuFile(NULL),
@@ -120,14 +112,16 @@ MainWindow::MainWindow (AppConfig& appConfig,
     m_pMenuHelp(NULL),
     m_pCancelButton(NULL),
     m_ExpectedRunningState(kStopped),
-    m_pSslCertificate(NULL),
-    m_SecureSocket(false)
+    m_SecureSocket(false),
+    m_serverConnection(*this),
+    m_clientConnection(*this)
 {
-#ifndef SYNERGY_ENTERPRISE
+#if !defined(SYNERGY_ENTERPRISE) && defined(SYNERGY_AUTOCONFIG)
     m_pZeroconf = new Zeroconf(this);
 #endif
 
     setupUi(this);
+    updateAutoConfigWidgets();
 
     createMenuBar();
     loadSettings();
@@ -135,16 +129,17 @@ MainWindow::MainWindow (AppConfig& appConfig,
 
     m_pWidgetUpdate->hide();
     m_VersionChecker.setApp(appPath(appConfig.synergycName()));
-    
-    m_pLabelScreenName->setText(getScreenName());
+
+    updateScreenName();
     connect(m_AppConfig, SIGNAL(screenNameChanged()), this, SLOT(updateScreenName()));
-    m_pLabelIpAddresses->setText(getIPAddresses());
+    m_pLabelIpAddresses->setText(tr("This computer's IP addresses: %1").arg(getIPAddresses()));
 
 #if defined(Q_OS_WIN)
     // ipc must always be enabled, so that we can disable command when switching to desktop mode.
     connect(&m_IpcClient, SIGNAL(readLogLine(const QString&)), this, SLOT(appendLogRaw(const QString&)));
     connect(&m_IpcClient, SIGNAL(errorMessage(const QString&)), this, SLOT(appendLogError(const QString&)));
     connect(&m_IpcClient, SIGNAL(infoMessage(const QString&)), this, SLOT(appendLogInfo(const QString&)));
+    connect(&m_IpcClient, SIGNAL(readLogLine(const QString&)), this, SLOT(handleIdleService(const QString&)));
     m_IpcClient.connectToHost();
 #endif
 
@@ -157,12 +152,12 @@ MainWindow::MainWindow (AppConfig& appConfig,
     setMinimumSize(size());
 #endif
 
-    m_trialWidget->hide();
+    m_trialLabel->hide();
 
     // hide padlock icon
     secureSocket(false);
 
-    updateLocalFingerprint();
+
 
     connect (this, SIGNAL(windowShown()),
              this, SLOT(on_windowShown()), Qt::QueuedConnection);
@@ -203,13 +198,13 @@ MainWindow::MainWindow (AppConfig& appConfig,
     m_pActivate->setVisible(false);
 #endif
 
-#ifndef SYNERGY_ENTERPRISE
+#if !defined(SYNERGY_ENTERPRISE) && defined(SYNERGY_AUTOCONFIG)
     updateZeroconfService();
 
     addZeroconfServer(m_AppConfig->autoConfigServer());
-#endif
 
     updateAutoConfigWidgets();
+#endif
 }
 
 MainWindow::~MainWindow()
@@ -219,11 +214,9 @@ MainWindow::~MainWindow()
         stopDesktop();
     }
 
-#ifndef SYNERGY_ENTERPRISE
+#if !defined(SYNERGY_ENTERPRISE) && defined(SYNERGY_AUTOCONFIG)
     delete m_pZeroconf;
 #endif
-
-    delete m_pSslCertificate;
 }
 
 void MainWindow::open()
@@ -254,7 +247,7 @@ void MainWindow::open()
     // only start if user has previously started. this stops the gui from
     // auto hiding before the user has configured synergy (which of course
     // confuses first time users, who think synergy has crashed).
-    if (appConfig().startedBefore() && appConfig().processMode() == Desktop) {
+    if (appConfig().startedBefore() && appConfig().processMode() == ProcessMode::Desktop) {
         startSynergy();
     }
 }
@@ -308,14 +301,9 @@ void MainWindow::createMenuBar()
 
 void MainWindow::loadSettings()
 {
-    // the next two must come BEFORE loading groupServerChecked and groupClientChecked or
-    // disabling and/or enabling the right widgets won't automatically work
-    m_pRadioExternalConfig->setChecked(appConfig().getUseExternalConfig());
-    m_pRadioInternalConfig->setChecked(appConfig().getUseInternalConfig());
+    enableServer(appConfig().getServerGroupChecked());
+    enableClient(appConfig().getClientGroupChecked());
 
-    m_pGroupServer->setChecked(appConfig().getServerGroupChecked());
-    m_pLineEditConfigFile->setText(appConfig().getConfigFile());
-    m_pGroupClient->setChecked(appConfig().getClientGroupChecked());
     m_pLineEditHostname->setText(appConfig().getServerHostname());
 }
 
@@ -323,7 +311,7 @@ void MainWindow::initConnections()
 {
     connect(m_pActionMinimize, SIGNAL(triggered()), this, SLOT(hide()));
     connect(m_pActionRestore, SIGNAL(triggered()), this, SLOT(showNormal()));
-    connect(m_pActionStartSynergy, SIGNAL(triggered()), this, SLOT(startSynergy()));
+    connect(m_pActionStartSynergy, SIGNAL(triggered()), this, SLOT(actionStart()));
     connect(m_pActionStopSynergy, SIGNAL(triggered()), this, SLOT(stopSynergy()));
     connect(m_pActionQuit, SIGNAL(triggered()), qApp, SLOT(quit()));
     connect(&m_VersionChecker, SIGNAL(updateFound(const QString&)), this, SLOT(updateFound(const QString&)));
@@ -332,21 +320,16 @@ void MainWindow::initConnections()
 void MainWindow::saveSettings()
 {
     // program settings
-    appConfig().setServerGroupChecked(m_pGroupServer->isChecked());
-    appConfig().setClientGroupChecked(m_pGroupClient->isChecked());
-    appConfig().setUseExternalConfig(m_pRadioExternalConfig->isChecked());
-    appConfig().setUseInternalConfig(m_pRadioInternalConfig->isChecked());
-    appConfig().setConfigFile(m_pLineEditConfigFile->text());
+    appConfig().setServerGroupChecked(m_pRadioGroupServer->isChecked());
+    appConfig().setClientGroupChecked(m_pRadioGroupClient->isChecked());
     appConfig().setServerHostname(m_pLineEditHostname->text());
 
-
-    //Save everything
+    /* Save everything */
     GUI::Config::ConfigWriter::make()->globalSave();
-
 }
 
 void MainWindow::zeroConfToggled() {
-#ifndef SYNERGY_ENTERPRISE
+#if !defined(SYNERGY_ENTERPRISE) && defined(SYNERGY_AUTOCONFIG)
     updateZeroconfService();
 
     addZeroconfServer(m_AppConfig->autoConfigServer());
@@ -360,10 +343,19 @@ void MainWindow::setIcon(qSynergyState state) const
     QIcon icon;
 
 #ifdef Q_OS_MAC
-    if (isOSXInterfaceStyleDark())
-        icon.addFile(synergyDarkIconFiles[state]);
-    else
-        icon.addFile(synergyLightIconFiles[state]);
+    switch(getOSXIconsTheme()) {
+        case IconsTheme::ICONS_DARK:
+            icon.addFile(synergyDarkIconFiles[state]);
+            break;
+        case IconsTheme::ICONS_LIGHT:
+            icon.addFile(synergyLightIconFiles[state]);
+            break;
+        case IconsTheme::ICONS_TEMPLATE:
+        default:
+            icon.addFile(synergyDarkIconFiles[state]);
+            icon.setIsMask(true);
+            break;
+    }
 #else
     icon.addFile(synergyDefaultIconFiles[state]);
 #endif
@@ -453,12 +445,28 @@ void MainWindow::appendLogRaw(const QString& text)
     }
 }
 
+void MainWindow::handleIdleService(const QString& text)
+{
+    foreach(QString line, text.split(QRegExp("\r|\n|\r\n"))) {
+        // only start if there is no active service running
+        if (!line.isEmpty() && line.contains("service status: idle") && appConfig().startedBefore()) {
+            startSynergy();
+        }
+    }
+}
+
 void MainWindow::updateFromLogLine(const QString &line)
 {
     // TODO: This shouldn't be updating from log needs a better way of doing this
     checkConnected(line);
     checkFingerprint(line);
     checkSecureSocket(line);
+
+    // subprocess (synergys, synergyc) is not allowed to show notifications
+    // process the log from it and show notificatino from synergy instead
+#ifdef Q_OS_MAC
+    checkOSXNotification(line);
+#endif
 
 #ifndef SYNERGY_ENTERPRISE
     checkLicense(line);
@@ -468,8 +476,18 @@ void MainWindow::updateFromLogLine(const QString &line)
 void MainWindow::checkConnected(const QString& line)
 {
     // TODO: implement ipc connection state messages to replace this hack.
-    if (line.contains("connected to server") ||
-        line.contains("accepted client connection"))
+    if (m_pRadioGroupServer->isChecked())
+    {
+        m_serverConnection.update(line);
+        m_pLabelServerState->updateServerState(line);
+    }
+    else
+    {
+        m_clientConnection.update(line);
+        m_pLabelClientState->updateClientState(line);
+    }
+
+    if (line.contains("connected to server") || line.contains("has connected"))
     {
         setSynergyState(synergyConnected);
 
@@ -558,9 +576,30 @@ void MainWindow::checkSecureSocket(const QString& line)
         secureSocket(true);
 
         //Get the protocol version from the line
-        m_SecureSocketVersion = line.mid(index + strlen(tlsCheckString));
+        m_SecureSocketVersion = line.mid(index + strlen(tlsCheckString)); // Compliant: we made sure that tlsCheckString variable ended with null(static const char* declaration)
     }
 }
+
+#ifdef Q_OS_MAC
+void MainWindow::checkOSXNotification(const QString& line)
+{
+    static const QString OSXNotificationSubstring = "OSX Notification: ";
+    if (line.contains(OSXNotificationSubstring) && line.contains('|')) {
+        int delimterPosition = line.indexOf('|');
+        int notificationStartPosition = line.indexOf(OSXNotificationSubstring);
+        QString title =
+                line.mid(notificationStartPosition + OSXNotificationSubstring.length(),
+                         delimterPosition - notificationStartPosition - OSXNotificationSubstring.length());
+        QString body =
+                line.mid(delimterPosition + 1,
+                         line.length() - delimterPosition);
+        if (!showOSXNotification(title, body)) {
+            appendLogInfo("OSX notification was not shown");
+        }
+    }
+}
+#endif
+
 QString MainWindow::getTimeStamp()
 {
     QDateTime current = QDateTime::currentDateTime();
@@ -596,6 +635,12 @@ void MainWindow::clearLog()
 
 void MainWindow::startSynergy()
 {
+    saveSettings();
+
+#ifdef Q_OS_MAC
+    requestOSXNotificationPermission();
+#endif
+
 #ifndef SYNERGY_ENTERPRISE
     SerialKey serialKey = m_LicenseManager->serialKey();
     if (!serialKey.isValid()) {
@@ -617,7 +662,7 @@ void MainWindow::startSynergy()
     args << "-f" << "--no-tray" << "--debug" << appConfig().logLevelText();
 
 
-    args << "--name" << getScreenName();
+    args << "--name" << appConfig().screenName();
 
     if (desktopMode)
     {
@@ -670,6 +715,17 @@ void MainWindow::startSynergy()
     }
 #endif
 
+    if (m_AppConfig->getPreventSleep())
+    {
+        args << "--prevent-sleep";
+    }
+
+    // put a space between last log output and new instance.
+    if (!m_pLogOutput->toPlainText().isEmpty())
+        appendLogRaw("");
+
+    appendLogInfo("starting " + QString(synergyType() == synergyServer ? "server" : "client"));
+
     if ((synergyType() == synergyClient && !clientArgs(args, app))
         || (synergyType() == synergyServer && !serverArgs(args, app)))
     {
@@ -684,12 +740,6 @@ void MainWindow::startSynergy()
         connect(synergyProcess(), SIGNAL(readyReadStandardError()), this, SLOT(logError()));
     }
 
-    // put a space between last log output and new instance.
-    if (!m_pLogOutput->toPlainText().isEmpty())
-        appendLogRaw("");
-
-    appendLogInfo("starting " + QString(synergyType() == synergyServer ? "server" : "client"));
-
     qDebug() << args;
 
     // show command if debug log level...
@@ -697,7 +747,6 @@ void MainWindow::startSynergy()
         appendLogInfo(QString("command: %1 %2").arg(app, args.join(" ")));
     }
 
-    appendLogInfo("config file: " + configFilename());
     appendLogInfo("log level: " + appConfig().logLevelText());
 
     if (appConfig().logToFile())
@@ -719,6 +768,12 @@ void MainWindow::startSynergy()
         QString command(app + " " + args.join(" "));
         m_IpcClient.sendCommand(command, appConfig().elevateMode());
     }
+}
+
+void MainWindow::actionStart()
+{
+    m_clientConnection.setCheckConnection(true);
+    startSynergy();
 }
 
 void MainWindow::retryStart()
@@ -754,7 +809,8 @@ bool MainWindow::clientArgs(QStringList& args, QString& app)
         args << "--log" << appConfig().logFilenameCmd();
     }
 
-#ifndef SYNERGY_ENTERPRISE
+
+#if !defined(SYNERGY_ENTERPRISE) && defined(SYNERGY_AUTOCONFIG)
     // check auto config first, if it is disabled or no server detected,
     // use line edit host name if it is not empty
     if (appConfig().autoConfig()) {
@@ -775,7 +831,7 @@ bool MainWindow::clientArgs(QStringList& args, QString& app)
 
     if (m_pLineEditHostname->text().isEmpty())
     {
-#ifndef SYNERGY_ENTERPRISE
+#if !defined(SYNERGY_ENTERPRISE) && defined(SYNERGY_AUTOCONFIG)
         //check if autoconfig mode is enabled
         if (!appConfig().autoConfig())
         {
@@ -786,7 +842,7 @@ bool MainWindow::clientArgs(QStringList& args, QString& app)
                 tr("Please fill in a hostname for the synergy client to connect to."));
             return false;
 
-#ifndef SYNERGY_ENTERPRISE
+#if !defined(SYNERGY_ENTERPRISE) && defined(SYNERGY_AUTOCONFIG)
         }
         else
         {
@@ -794,50 +850,77 @@ bool MainWindow::clientArgs(QStringList& args, QString& app)
         }
 #endif
     }
-    args << m_pLineEditHostname->text() + ":" + QString::number(appConfig().port());
+
+    QString hostName = m_pLineEditHostname->text();
+    // if interface is IPv6 - ensure that ip is in square brackets
+    if (hostName.count(':') > 1) {
+        if(hostName[0] != '[') {
+            hostName.insert(0, '[');
+        }
+        if(hostName[hostName.size() - 1] != ']') {
+            hostName.push_back(']');
+        }
+    }
+
+    args << hostName + ":" + QString::number(appConfig().port());
     return true;
 }
 
 QString MainWindow::configFilename()
 {
-    QString filename;
-    if (m_pRadioInternalConfig->isChecked())
+    QString configFullPath;
+    if (appConfig().getUseExternalConfig())
     {
-        // TODO: no need to use a temporary file, since we need it to
-        // be permenant (since it'll be used for Windows services, etc).
-        QTemporaryFile tempConfigFile;
-        tempConfigFile.setAutoRemove(false);
-
-        if (!tempConfigFile.open())
-        {
-            QMessageBox::critical(this, tr("Cannot write configuration file"), tr("The temporary configuration file required to start synergy can not be written."));
-            return "";
-        }
-
-        serverConfig().save(tempConfigFile);
-        filename = tempConfigFile.fileName();
-
-        tempConfigFile.close();
+        configFullPath = appConfig().getConfigFile();
     }
     else
     {
-        if (!QFile::exists(m_pLineEditConfigFile->text()))
+        QStringList errors;
+        for (auto path : {QStandardPaths::AppDataLocation,
+                          QStandardPaths::AppConfigLocation})
         {
-            if (QMessageBox::warning(this, tr("Configuration filename invalid"),
-                tr("You have not filled in a valid configuration file for the synergy server. "
-                        "Do you want to browse for the configuration file now?"), QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes
-                    || !on_m_pButtonBrowseConfigFile_clicked())
-                return "";
+            auto configDirPath = QStandardPaths::writableLocation(path);
+            if (!QDir().mkpath(configDirPath))
+            {
+                errors.push_back(tr("Failed to create config folder \"%1\"").arg(configDirPath));
+                continue;
+            }
+
+            QFile configFile(configDirPath + "/LastConfig.cfg");
+            if (!configFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            {
+                errors.push_back(tr("File:\"%1\" Error:%2").arg(configFile.fileName(), configFile.errorString()));
+                continue;
+            }
+
+            serverConfig().save(configFile);
+            configFile.close();
+            configFullPath = configFile.fileName();
+
+            break;
         }
 
-        filename = m_pLineEditConfigFile->text();
+        if (configFullPath.isEmpty())
+        {
+            QMessageBox::critical(this, tr("Cannot write configuration file"), errors.join('\n'));
+        }
     }
-    return filename;
+
+    return configFullPath;
 }
 
 QString MainWindow::address() const
 {
     QString i = appConfig().networkInterface();
+    // if interface is IPv6 - ensure that ip is in square brackets
+    if (i.count(':') > 1) {
+        if(i[0] != '[') {
+            i.insert(0, '[');
+        }
+        if(i[i.size() - 1] != ']') {
+            i.push_back(']');
+        }
+    }
     return (!i.isEmpty() ? i : "") + ":" + QString::number(appConfig().port());
 }
 
@@ -870,11 +953,16 @@ bool MainWindow::serverArgs(QStringList& args, QString& app)
     }
 
     QString configFilename = this->configFilename();
+    if (configFilename.isEmpty())
+    {
+        return false;
+    }
 #if defined(Q_OS_WIN)
     // wrap in quotes in case username contains spaces.
     configFilename = QString("\"%1\"").arg(configFilename);
 #endif
     args << "-c" << configFilename << "--address" << address();
+    appendLogInfo("config file: " + configFilename);
 
 #ifndef SYNERGY_ENTERPRISE
     if (!appConfig().serialKey().isEmpty()) {
@@ -1040,48 +1128,34 @@ void MainWindow::setVisible(bool visible)
 
 QString MainWindow::getIPAddresses()
 {
-    QList<QHostAddress> addresses = QNetworkInterface::allAddresses();
-
+    QStringList result;
     bool hinted = false;
-    QString result;
-    for (int i = 0; i < addresses.size(); i++) {
-        if (addresses[i].protocol() == QAbstractSocket::IPv4Protocol &&
-            addresses[i] != QHostAddress(QHostAddress::LocalHost)) {
+    const auto localnet = QHostAddress::parseSubnet("192.168.0.0/16");
+    const QList<QHostAddress> addresses = QNetworkInterface::allAddresses();
 
-            QString address = addresses[i].toString();
-            QString format = "%1, ";
+    for (const auto& address : addresses) {
+        if (address.protocol() == QAbstractSocket::IPv4Protocol &&
+            address != QHostAddress(QHostAddress::LocalHost) &&
+            !address.isInSubnet(QHostAddress::parseSubnet("169.254.0.0/16"))) {
 
             // usually 192.168.x.x is a useful ip for the user, so indicate
             // this by making it bold.
-            if (!hinted && address.startsWith("192.168")) {
+            if (!hinted && address.isInSubnet(localnet)) {
+                QString format = "<span style=\"color:#4285F4;\">%1</span>";
+                result.append(format.arg(address.toString()));
                 hinted = true;
-                format = "<b>%1</b>, ";
             }
-            //Prevent self assigned IPs being displayed
-            if (!address.startsWith("169.254")) {
-                result += format.arg(address);
+            else {
+                result.append(address.toString());
             }
         }
     }
 
-    if (result == "") {
-        return tr("Unknown");
+    if (result.isEmpty()) {
+        result.append(tr("Unknown"));
     }
 
-    // remove trailing comma.
-    result.chop(2);
-
-    return result;
-}
-
-QString MainWindow::getScreenName()
-{
-    if (appConfig().screenName() == "") {
-        return QHostInfo::localHostName();
-    }
-    else {
-        return appConfig().screenName();
-    }
+    return result.join(", ");
 }
 
 void MainWindow::changeEvent(QEvent* event)
@@ -1138,11 +1212,11 @@ void MainWindow::InvalidLicense()
 
 void MainWindow::showLicenseNotice(const QString& notice)
 {
-    this->m_trialWidget->hide();
+    this->m_trialLabel->hide();
 
     if (!notice.isEmpty()) {
         this->m_trialLabel->setText(notice);
-        this->m_trialWidget->show();
+        this->m_trialLabel->show();
     }
 
     setWindowTitle (m_LicenseManager->activeEditionName());
@@ -1151,14 +1225,15 @@ void MainWindow::showLicenseNotice(const QString& notice)
 
 void MainWindow::updateLocalFingerprint()
 {
-    if (m_AppConfig->getCryptoEnabled() && Fingerprint::local().fileExists()) {
+    if (m_AppConfig->getCryptoEnabled() &&
+        Fingerprint::local().fileExists() &&
+        m_pRadioGroupServer->isChecked())
+    {
         m_pLabelFingerprint->setVisible(true);
-        m_pLabelLocalFingerprint->setVisible(true);
-        m_pLabelLocalFingerprint->setText(Fingerprint::local().readFirst());
     }
-    else {
+    else
+    {
         m_pLabelFingerprint->setVisible(false);
-        m_pLabelLocalFingerprint->setVisible(false);
     }
 }
 
@@ -1169,33 +1244,6 @@ MainWindow::licenseManager() const
     return *m_LicenseManager;
 }
 #endif
-
-void MainWindow::on_m_pGroupClient_toggled(bool on)
-{
-    m_pGroupServer->setChecked(!on);
-
-    // only call in either client or server toggle, but not both
-    // since the toggle functions call eachother indirectly.
-    updateZeroconfService();
-}
-
-void MainWindow::on_m_pGroupServer_toggled(bool on)
-{
-    m_pGroupClient->setChecked(!on);
-}
-
-bool MainWindow::on_m_pButtonBrowseConfigFile_clicked()
-{
-    QString fileName = QFileDialog::getOpenFileName(this, tr("Browse for a synergys config file"), QString(), synergyConfigFilter);
-
-    if (!fileName.isEmpty())
-    {
-        m_pLineEditConfigFile->setText(fileName);
-        return true;
-    }
-
-    return false;
-}
 
 bool  MainWindow::on_m_pActionSave_triggered()
 {
@@ -1223,7 +1271,7 @@ void MainWindow::on_m_pActionHelp_triggered()
 
 void MainWindow::updateZeroconfService()
 {
-#ifndef SYNERGY_ENTERPRISE
+#if !defined(SYNERGY_ENTERPRISE) && defined(SYNERGY_AUTOCONFIG)
 
     // reset the server list in case one has gone away.
     // it'll be re-added after the zeroconf service restarts.
@@ -1242,28 +1290,11 @@ void MainWindow::updateZeroconfService()
 
 void MainWindow::updateAutoConfigWidgets()
 {
-    if (appConfig().autoConfig()) {
-        m_pLabelAutoDetected->show();
-        m_pComboServerList->show();
+   m_pLabelServerName->show();
+   m_pLineEditHostname->show();
 
-        m_pLabelServerName->hide();
-        m_pLineEditHostname->hide();
-
-        m_pWidgetAutoConfig->hide();
-    }
-    else {
-        m_pLabelServerName->show();
-        m_pLineEditHostname->show();
-
-        m_pLabelAutoDetected->hide();
-        m_pComboServerList->hide();
-
-#ifndef SYNERGY_ENTERPRISE
-        m_pWidgetAutoConfig->show();
-#else
-        m_pWidgetAutoConfig->hide();
-#endif
-    }
+   m_pLabelAutoDetected->hide();
+   m_pComboServerList->hide();
 }
 
 void MainWindow::on_m_pActionSettings_triggered()
@@ -1309,7 +1340,7 @@ void MainWindow::autoAddScreen(const QString name)
 
 void MainWindow::showConfigureServer(const QString& message)
 {
-    ServerConfigDialog dlg(this, serverConfig(), appConfig().screenName());
+    ServerConfigDialog dlg(this, serverConfig());
     dlg.message(message);
     dlg.exec();
 }
@@ -1328,6 +1359,7 @@ void MainWindow::on_m_pActivate_triggered()
 
 void MainWindow::on_m_pButtonApply_clicked()
 {
+    m_clientConnection.setCheckConnection(true);
     restartSynergy();
 }
 
@@ -1339,8 +1371,6 @@ int MainWindow::raiseActivationDialog()
     }
     ActivationDialog activationDialog (this, appConfig(), licenseManager());
     m_ActivationDialogRunning = true;
-    connect (&activationDialog, SIGNAL(finished(int)),
-             this, SLOT(on_activationDialogFinish()), Qt::QueuedConnection);
     int result = activationDialog.exec();
     m_ActivationDialogRunning = false;
     if (!m_PendingClientNames.empty()) {
@@ -1390,9 +1420,14 @@ void MainWindow::secureSocket(bool secureSocket)
     }
 }
 
-void MainWindow::on_m_pLabelAutoConfig_linkActivated(const QString &)
+void MainWindow::on_m_pLabelComputerName_linkActivated(const QString&)
 {
-    m_pActionSettings->trigger();
+   m_pActionSettings->trigger();
+}
+
+void MainWindow::on_m_pLabelFingerprint_linkActivated(const QString&)
+{
+    QMessageBox::information(this, "SSL/TLS fingerprint", Fingerprint::local().readFirst());
 }
 
 void MainWindow::on_m_pComboServerList_currentIndexChanged(const QString &server)
@@ -1406,7 +1441,66 @@ void MainWindow::windowStateChanged()
         hide();
 }
 
-void MainWindow::updateScreenName() 
+void MainWindow::updateScreenName()
 {
-    m_pLabelScreenName->setText(getScreenName());
+    m_pLabelComputerName->setText(tr("This computer's name: %1 (<a href=\"#\" style=\"text-decoration: none; color: #4285F4;\">Preferences</a>)").arg(appConfig().screenName()));
+    serverConfig().updateServerName();
 }
+
+void MainWindow::enableServer(bool enable)
+{
+    m_pRadioGroupServer->setChecked(enable);
+
+    if (enable)
+    {
+        m_pButtonConfigureServer->show();
+        m_pLabelServerState->show();
+        updateLocalFingerprint();
+        m_pButtonToggleStart->setEnabled(enable);
+    }
+    else
+    {
+        m_pLabelFingerprint->hide();
+        m_pButtonConfigureServer->hide();
+        m_pLabelServerState->hide();
+    }
+}
+
+void MainWindow::enableClient(bool enable)
+{
+    m_pRadioGroupClient->setChecked(enable);
+
+    if (enable)
+    {
+        m_pLabelServerName->show();
+        m_pLineEditHostname->show();
+        m_pButtonConnect->show();
+        m_pButtonToggleStart->setEnabled(enable);
+    }
+    else
+    {
+        m_pLabelClientState->hide();
+        m_pLabelServerName->hide();
+        m_pLineEditHostname->hide();
+        m_pButtonConnect->hide();
+    }
+}
+
+
+void MainWindow::on_m_pRadioGroupServer_clicked(bool)
+{
+    enableServer(true);
+    enableClient(false);
+}
+
+void MainWindow::on_m_pRadioGroupClient_clicked(bool)
+{
+    enableClient(true);
+    enableServer(false);
+}
+
+void MainWindow::on_m_pButtonConnect_clicked()
+{
+    on_m_pButtonApply_clicked();
+}
+

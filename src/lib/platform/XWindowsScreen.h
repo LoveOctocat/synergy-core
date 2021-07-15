@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "arch/Arch.h"
 #include "synergy/PlatformScreen.h"
 #include "synergy/KeyMap.h"
 #include "common/stdset.h"
@@ -84,6 +85,9 @@ public:
     virtual void        setOptions(const OptionsList& options);
     virtual void        setSequenceNumber(UInt32);
     virtual bool        isPrimary() const;
+    String              getSecureInputApp() const override;
+
+    void                updateScrollDirection() override;
 
 protected:
     // IPlatformScreen overrides
@@ -113,6 +117,11 @@ private:
     // X I/O error handler
     void                onError();
     static int            ioErrorHandler(Display*);
+
+    // sleep management
+    static bool         sleepInhibitCall(bool state, ArchSystemUnix::InhibitScreenServices serviceID);
+    static bool         disableIdleSleep();
+    static bool         enableIdleSleep();
 
 private:
     class KeyEventFilter {
@@ -250,4 +259,8 @@ private:
     // pointer to (singleton) screen.  this is only needed by
     // ioErrorHandler().
     static XWindowsScreen*    s_screen;
+
+    // -1 for natural scrolling direction, 1 otherwise
+    SInt32                    m_scrollDirectionMouse = 1;
+    SInt32                    m_scrollDirectionTouchpad = 1;
 };

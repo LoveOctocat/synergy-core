@@ -1,7 +1,6 @@
 /*
  * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2008 Volker Lanz (vl@fidra.de)
+ * Copyright (C) 2015-2016 Symless Ltd.
  * 
  * This package is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -16,25 +15,19 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#if !defined(NEWSCREENWIDGET__H)
+#pragma once
 
-#define NEWSCREENWIDGET__H
+#include "server/ClientProxy1_6.h"
 
-#include <QLabel>
+//! Proxy for client implementing protocol version 1.7
+class ClientProxy1_7 : public ClientProxy1_6 {
+public:
+    ClientProxy1_7(const String& name, synergy::IStream* adoptedStream, Server* server, IEventQueue* events);
+    ~ClientProxy1_7() override = default;
 
-class QMouseEvent;
-class QWidget;
+    void        secureInputNotification(const String& app) const override;
 
-class NewScreenWidget : public QLabel
-{
-    Q_OBJECT
+private:
 
-    public:
-        NewScreenWidget(QWidget* parent);
-
-    protected:
-        void mousePressEvent(QMouseEvent* event);
+    IEventQueue*        m_events;
 };
-
-#endif
-

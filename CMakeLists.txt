@@ -26,11 +26,10 @@ else()
     option (SYNERGY_BUILD_LEGACY_SERVICE "Build the legacy service (synergyd)" ON)
     option (SYNERGY_BUILD_LEGACY_INSTALLER "Build the legacy installer" ON)
 endif()
-
 option (BUILD_TESTS "Override building of tests" ON)
 option (ENABLE_COVERAGE "Build with coverage")
 
-if (DEFINED ENV{SYNERGY_ENTERPRISE})
+if ($ENV{SYNERGY_ENTERPRISE})
     option (SYNERGY_ENTERPRISE "Build Enterprise" ON)
 else()
     option (SYNERGY_ENTERPRISE "Build Enterprise" OFF)
@@ -163,6 +162,21 @@ if (UNIX)
     if (APPLE)
         set (CMAKE_CXX_FLAGS "--sysroot ${CMAKE_OSX_SYSROOT} ${CMAKE_CXX_FLAGS} -DGTEST_USE_OWN_TR1_TUPLE=1")
 
+        if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+            set(CMAKE_OSX_DEPLOYMENT_TARGET 11.0)
+        endif()
+
+        if(CMAKE_OSX_DEPLOYMENT_TARGET GREATER_EQUAL 11.0)
+            set(SYNERGY_OSX_DEPLOYMENT_TARGET 1100)
+        elseif(CMAKE_OSX_DEPLOYMENT_TARGET GREATER_EQUAL 10.15)
+            set(SYNERGY_OSX_DEPLOYMENT_TARGET 1015)
+        elseif(CMAKE_OSX_DEPLOYMENT_TARGET GREATER_EQUAL 10.14)
+            set(SYNERGY_OSX_DEPLOYMENT_TARGET 1014)
+        else()
+            set(SYNERGY_OSX_DEPLOYMENT_TARGET 1013)
+        endif()
+        add_compile_definitions(OSX_DEPLOYMENT_TARGET=${SYNERGY_OSX_DEPLOYMENT_TARGET})
+
         find_library (lib_ScreenSaver ScreenSaver)
         find_library (lib_IOKit IOKit)
         find_library (lib_ApplicationServices ApplicationServices)
@@ -176,6 +190,13 @@ if (UNIX)
             ${lib_Foundation}
             ${lib_Carbon}
         )
+
+        if(SYNERGY_OSX_DEPLOYMENT_TARGET GREATER_EQUAL 1014)
+            find_library (lib_UserNotifications UserNotifications)
+            list (APPEND libs
+                ${lib_UserNotifications}
+            )
+        endif()
 
     else() # not-apple
 
@@ -255,14 +276,6 @@ if (UNIX)
             list (APPEND libs Xi)
         endif()
 
-        if (NOT SYNERGY_ENTERPRISE AND SYNERGY_BUILD_LEGACY_GUI)
-            set (DnsSdlib "dns_sd.h")
-            set (CMAKE_EXTRA_INCLUDE_FILES "${CMAKE_EXTRA_INCLUDE_FILES};${DnsSdlib}")
-            check_include_files ("${DnsSdlib}" HAVE_DNS_SD)
-            if (NOT HAVE_DNS_SD)
-                message (FATAL_ERROR "Missing header: " ${DnsSdlib})
-            endif()
-        endif()
     endif()
 
     # For config.h, set some static values; it may be a good idea to make
@@ -310,7 +323,10 @@ endif()
 #
 # OpenSSL
 #
-if(WIN32)
+# Apple has to use static libraries because
+# "Use of the Apple-provided OpenSSL libraries by apps is strongly discouraged."
+# https://developer.apple.com/library/archive/documentation/Security/Conceptual/cryptoservices/SecureNetworkCommunicationAPIs/SecureNetworkCommunicationAPIs.html
+if(APPLE)
     set(OPENSSL_USE_STATIC_LIBS TRUE)
 endif()
 find_package(OpenSSL REQUIRED)
@@ -328,7 +344,7 @@ if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         RESULT_VARIABLE GIT_SUBMOD_RESULT)
         if(NOT GIT_SUBMOD_RESULT EQUAL "0")
-        message(FATAL_ERROR "git submodule update --init failed with ${GIT_SUBMOD_RESULT}, please checkout submodules")
+            message(FATAL_ERROR "git submodule update --init failed with ${GIT_SUBMOD_RESULT}, please checkout submodules")
         endif()
     endif()
 endif()
@@ -391,43 +407,43 @@ endmacro(generate_versionfile)
 
 
 if (${SYNERGY_BUILD_LEGACY_INSTALLER})
-    #
-    # macOS app Bundle
-    #
-    if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-        set (CMAKE_INSTALL_RPATH "@loader_path/../Libraries;@loader_path/../Frameworks")
-        set (SYNERGY_BUNDLE_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/dist/macos/bundle)
-        set (SYNERGY_BUNDLE_DIR ${CMAKE_BINARY_DIR}/bundle)
-        set (SYNERGY_BUNDLE_APP_DIR ${SYNERGY_BUNDLE_DIR}/Synergy.app)
-        set (SYNERGY_BUNDLE_BINARY_DIR ${SYNERGY_BUNDLE_APP_DIR}/Contents/MacOS)
+#
+# macOS app Bundle
+#
+if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    set (CMAKE_INSTALL_RPATH "@loader_path/../Libraries;@loader_path/../Frameworks")
+    set (SYNERGY_BUNDLE_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/dist/macos/bundle)
+    set (SYNERGY_BUNDLE_DIR ${CMAKE_BINARY_DIR}/bundle)
+    set (SYNERGY_BUNDLE_APP_DIR ${SYNERGY_BUNDLE_DIR}/Synergy.app)
+    set (SYNERGY_BUNDLE_BINARY_DIR ${SYNERGY_BUNDLE_APP_DIR}/Contents/MacOS)
 
-        generate_versionfile()
-        configure_files (${SYNERGY_BUNDLE_SOURCE_DIR} ${SYNERGY_BUNDLE_DIR})
-    endif()
+    generate_versionfile()
+    configure_files (${SYNERGY_BUNDLE_SOURCE_DIR} ${SYNERGY_BUNDLE_DIR})
+endif()
 
-    #
-    # Windows installer
-    #
-    if (${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+#
+# Windows installer
+#
+if (${CMAKE_SYSTEM_NAME} MATCHES "Windows")
         message (STATUS "Configuring the v1 installer")
         generate_versionfile()
         set(QT_PATH $ENV{CMAKE_PREFIX_PATH})
         configure_files (${CMAKE_CURRENT_SOURCE_DIR}/dist/wix ${CMAKE_BINARY_DIR}/installer)
-    endif()
+endif()
 
-    #
-    # Linux installation
-    #
-    if (${CMAKE_SYSTEM_NAME} MATCHES "Linux|.*BSD|DragonFly")
-        configure_files (${CMAKE_CURRENT_SOURCE_DIR}/dist/rpm ${CMAKE_BINARY_DIR}/rpm)
-        install(FILES res/synergy.svg DESTINATION share/icons/hicolor/scalable/apps)
-        if("${VERSION_MAJOR}" STREQUAL "2")
-            install(FILES res/synergy2.desktop DESTINATION share/applications)
-        else()
-            install(FILES res/synergy.desktop DESTINATION share/applications)
-        endif()
-        generate_versionfile()
+#
+# Linux installation
+#
+if (${CMAKE_SYSTEM_NAME} MATCHES "Linux|.*BSD|DragonFly")
+    configure_files (${CMAKE_CURRENT_SOURCE_DIR}/dist/rpm ${CMAKE_BINARY_DIR}/rpm)
+    install(FILES res/synergy.svg DESTINATION share/icons/hicolor/scalable/apps)
+    if("${VERSION_MAJOR}" STREQUAL "2")
+        install(FILES res/synergy2.desktop DESTINATION share/applications)
+    else()
+        install(FILES res/synergy.desktop DESTINATION share/applications)
     endif()
+    generate_versionfile()
+endif()
 
 else()
     message (STATUS "NOT configuring the v1 installer")

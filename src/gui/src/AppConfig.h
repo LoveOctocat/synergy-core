@@ -27,6 +27,7 @@
 #include <shared/EditionType.h>
 #include <mutex>
 #include "ConfigBase.h"
+#include "ConfigWriter.h"
 #include "CoreInterface.h"
 
 // this should be incremented each time a new page is added. this is
@@ -48,6 +49,7 @@ const int kWizardVersion = 8;
 
 class QSettings;
 class SettingsDialog;
+class ServerConfig;
 
 enum ProcessMode {
     Service,
@@ -61,13 +63,13 @@ class AppConfig: public QObject, public GUI::Config::ConfigBase
     friend class SettingsDialog;
     friend class MainWindow;
     friend class SetupWizard;
+    friend class ServerConfig;
 
     public:
         AppConfig();
-        ~AppConfig() override;
 
     public:
-
+        bool isWritable() const;
         bool isSystemScoped() const;
 
         const QString& screenName() const;
@@ -110,20 +112,24 @@ class AppConfig: public QObject, public GUI::Config::ConfigBase
 
         void setAutoHide(bool b);
         bool getAutoHide();
+        void setLanguageSync(bool b);
+        bool getLanguageSync() const;
+        void setPreventSleep(bool b);
+        bool getPreventSleep() const;
 #ifndef SYNERGY_ENTERPRISE
         bool activationHasRun() const;
         AppConfig& activationHasRun(bool value);
 #endif
         /// @brief Sets the user preference to load from SystemScope.
         /// @param [in] value
-        ///             True - This will set the variable, and save the user settings before loading the global scope settings
-        ///             False - This will load the UserScope then set the variable and save.
+        ///             True - This will set the variable and load the global scope settings.
+        ///             False - This will set the variable and load the user scope settings.
         void setLoadFromSystemScope(bool value);
 
 
         bool    getServerGroupChecked() const;
         bool    getUseExternalConfig() const;
-        QString getConfigFile() const;
+        const QString& getConfigFile() const;
         bool    getUseInternalConfig() const;
         bool    getClientGroupChecked() const;
         QString getServerHostname() const;
@@ -198,6 +204,7 @@ protected:
         kServerHostname,
         kTLSCertPath,
         kTLSKeyLength,
+        kPreventSleep
     };
 
         void setScreenName(const QString& s);
@@ -240,6 +247,8 @@ protected:
         int m_LastExpiringWarningTime;
         bool m_ActivationHasRun;
         bool m_MinimizeToTray;
+        bool m_LanguageSync           = true;
+        bool m_PreventSleep           = false;
 
         bool m_ServerGroupChecked;
         bool m_UseExternalConfig;
@@ -273,10 +282,22 @@ protected:
         template <typename T>
         void setSetting(AppConfig::Setting name, T value);
 
+        /// @brief Sets the value of a common setting
+        /// which should have the same value for all scopes
+        /// @param [in] name The Setting to be saved
+        /// @param [in] value The Value to be saved
+        template <typename T>
+        void setCommonSetting(AppConfig::Setting name, T value);
+
         /// @brief Loads a setting
         /// @param [in] name The setting to be loaded
         /// @param [in] defaultValue The default value of the setting
         QVariant loadSetting(AppConfig::Setting name, const QVariant& defaultValue = QVariant());
+
+        /// @brief Loads a common setting
+        /// @param [in] name The setting to be loaded
+        /// @param [in] defaultValue The default value of the setting
+        QVariant loadCommonSetting(AppConfig::Setting name, const QVariant& defaultValue = QVariant()) const;
 
         /// @brief As the settings will be accessible by multiple objects this lock will ensure that
         ///         it cant be modified by more that one object at a time if the setting is being switched
@@ -289,6 +310,10 @@ protected:
         /// @param [in] newValue The new value of the setting
         template <typename T>
         void setSettingModified(T& variable,const T& newValue);
+
+        /// @brief This method loads config from specified scope
+        /// @param [in] scope which should be loaded.
+        void loadScope(GUI::Config::ConfigWriter::Scope scope) const;
 
     signals:
         void sslToggled() const;

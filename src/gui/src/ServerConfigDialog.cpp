@@ -16,6 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "ScreenSettingsDialog.h"
 #include "ServerConfigDialog.h"
 #include "ServerConfig.h"
 #include "HotkeyDialog.h"
@@ -24,8 +25,9 @@
 #include <QtCore>
 #include <QtGui>
 #include <QMessageBox>
+#include <QFileDialog>
 
-ServerConfigDialog::ServerConfigDialog(QWidget* parent, ServerConfig& config, const QString& defaultScreenName) :
+ServerConfigDialog::ServerConfigDialog(QWidget* parent, ServerConfig& config) :
     QDialog(parent, Qt::WindowTitleHint | Qt::WindowSystemMenuHint),
     Ui::ServerConfigDialogBase(),
     m_OrigServerConfig(config),
@@ -35,11 +37,12 @@ ServerConfigDialog::ServerConfigDialog(QWidget* parent, ServerConfig& config, co
 {
     setupUi(this);
 
+    m_pEditConfigFile->setText(serverConfig().getConfigFile());
+    m_pCheckBoxUseExternalConfig->setChecked(serverConfig().getUseExternalConfig());
     m_pCheckBoxHeartbeat->setChecked(serverConfig().hasHeartbeat());
     m_pSpinBoxHeartbeat->setValue(serverConfig().heartbeat());
 
     m_pCheckBoxRelativeMouseMoves->setChecked(serverConfig().relativeMouseMoves());
-    m_pCheckBoxScreenSaverSync->setChecked(serverConfig().screenSaverSync());
     m_pCheckBoxWin32KeepForeground->setChecked(serverConfig().win32KeepForeground());
 
     m_pCheckBoxSwitchDelay->setChecked(serverConfig().hasSwitchDelay());
@@ -57,8 +60,6 @@ ServerConfigDialog::ServerConfigDialog(QWidget* parent, ServerConfig& config, co
 
     m_pCheckBoxIgnoreAutoConfigClient->setChecked(serverConfig().ignoreAutoConfigClient());
 
-    m_pCheckBoxEnableDragAndDrop->setChecked(serverConfig().enableDragAndDrop());
-
     m_pCheckBoxEnableClipboard->setChecked(serverConfig().clipboardSharing());
 	int clipboardSharingSizeM = static_cast<int>(serverConfig().clipboardSharingSize() / 1024);
     m_pSpinBoxClipboardSizeLimit->setValue(clipboardSharingSizeM);
@@ -69,8 +70,20 @@ ServerConfigDialog::ServerConfigDialog(QWidget* parent, ServerConfig& config, co
 
     m_pScreenSetupView->setModel(&m_ScreenSetupModel);
 
-    if (serverConfig().numScreens() == 0)
-        model().screen(serverConfig().numColumns() / 2, serverConfig().numRows() / 2) = Screen(defaultScreenName);
+    auto& screens = serverConfig().screens();
+    auto server = std::find_if(screens.begin(), screens.end(), [this](const Screen& screen){ return (screen.name() == serverConfig().getServerName());});
+
+    if (server == screens.end()) {
+        Screen serverScreen(serverConfig().getServerName());
+        serverScreen.markAsServer();
+        model().screen(serverConfig().numColumns() / 2, serverConfig().numRows() / 2) = serverScreen;
+    }
+    else {
+        server->markAsServer();
+    }
+
+    m_pButtonAddComputer->setEnabled(!model().isFull());
+    connect(m_pTrashScreenWidget, SIGNAL(screenRemoved()), this, SLOT(onScreenRemoved()));
 }
 
 void ServerConfigDialog::showEvent(QShowEvent* event)
@@ -86,11 +99,29 @@ void ServerConfigDialog::showEvent(QShowEvent* event)
 
 void ServerConfigDialog::accept()
 {
+    if (m_pCheckBoxUseExternalConfig->isChecked() &&
+        !QFile::exists(m_pEditConfigFile->text()))
+    {
+        auto title = tr("Configuration filename invalid");
+        auto description = tr("You have not filled in a valid configuration file for the synergy server. "
+                              "Do you want to browse for the configuration file now?");
+
+        auto selectedButton = QMessageBox::warning(this, title, description, QMessageBox::Yes | QMessageBox::No);
+
+        if (selectedButton != QMessageBox::Yes ||
+            !on_m_pButtonBrowseConfigFile_clicked())
+        {
+           return;
+        }
+    }
+
+    serverConfig().setConfigFile(m_pEditConfigFile->text());
+    serverConfig().setUseExternalConfig(m_pCheckBoxUseExternalConfig->isChecked());
+
     serverConfig().haveHeartbeat(m_pCheckBoxHeartbeat->isChecked());
     serverConfig().setHeartbeat(m_pSpinBoxHeartbeat->value());
 
     serverConfig().setRelativeMouseMoves(m_pCheckBoxRelativeMouseMoves->isChecked());
-    serverConfig().setScreenSaverSync(m_pCheckBoxScreenSaverSync->isChecked());
     serverConfig().setWin32KeepForeground(m_pCheckBoxWin32KeepForeground->isChecked());
 
     serverConfig().haveSwitchDelay(m_pCheckBoxSwitchDelay->isChecked());
@@ -105,11 +136,10 @@ void ServerConfigDialog::accept()
     serverConfig().setSwitchCorner(BaseConfig::BottomRight, m_pCheckBoxCornerBottomRight->isChecked());
     serverConfig().setSwitchCornerSize(m_pSpinBoxSwitchCornerSize->value());
     serverConfig().setIgnoreAutoConfigClient(m_pCheckBoxIgnoreAutoConfigClient->isChecked());
-    serverConfig().setEnableDragAndDrop(m_pCheckBoxEnableDragAndDrop->isChecked());
     serverConfig().setDisableLockToScreen(m_pCheckBoxDisableLockToScreen->isChecked());
     serverConfig().setClipboardSharingSize(m_pSpinBoxClipboardSizeLimit->value() * 1024);
-	serverConfig().setClipboardSharing(m_pCheckBoxEnableClipboard->isChecked() 
-					&& m_pSpinBoxClipboardSizeLimit->value());
+    serverConfig().setClipboardSharing(m_pCheckBoxEnableClipboard->isChecked()
+               && m_pSpinBoxClipboardSizeLimit->value());
 
     // now that the dialog has been accepted, copy the new server config to the original one,
     // which is a reference to the one in MainWindow.
@@ -232,4 +262,52 @@ void ServerConfigDialog::on_m_pListActions_itemSelectionChanged()
 {
     m_pButtonEditAction->setEnabled(!m_pListActions->selectedItems().isEmpty());
     m_pButtonRemoveAction->setEnabled(!m_pListActions->selectedItems().isEmpty());
+}
+
+void ServerConfigDialog::on_m_pButtonAddComputer_clicked()
+{
+    Screen newScreen("");
+
+    ScreenSettingsDialog dlg(this, &newScreen, &model().m_Screens);
+    if (dlg.exec() == QDialog::Accepted)
+    {
+        model().addScreen(newScreen);
+    }
+
+    m_pButtonAddComputer->setEnabled(!model().isFull());
+}
+
+void ServerConfigDialog::onScreenRemoved()
+{
+    m_pButtonAddComputer->setEnabled(true);
+}
+
+void ServerConfigDialog::on_m_pCheckBoxUseExternalConfig_toggled(bool checked)
+{
+    m_pLabelConfigFile->setEnabled(checked);
+    m_pEditConfigFile->setEnabled(checked);
+    m_pButtonBrowseConfigFile->setEnabled(checked);
+
+    m_pTabWidget->setTabEnabled(0, !checked);
+    m_pTabWidget->setTabEnabled(1, !checked);
+    m_pTabWidget->setTabEnabled(2, !checked);
+}
+
+bool ServerConfigDialog::on_m_pButtonBrowseConfigFile_clicked()
+{
+#if defined(Q_OS_WIN)
+    const QString synergyConfigFilter(QObject::tr("Synergy Configurations (*.sgc);;All files (*.*)"));
+#else
+    const QString synergyConfigFilter(QObject::tr("Synergy Configurations (*.conf);;All files (*.*)"));
+#endif
+
+    QString fileName = QFileDialog::getOpenFileName(this, tr("Browse for a synergys config file"), QString(), synergyConfigFilter);
+
+    if (!fileName.isEmpty())
+    {
+        m_pEditConfigFile->setText(fileName);
+        return true;
+    }
+
+    return false;
 }

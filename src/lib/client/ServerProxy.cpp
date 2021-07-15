@@ -26,6 +26,7 @@
 #include "synergy/ProtocolUtil.h"
 #include "synergy/option_types.h"
 #include "synergy/protocol_types.h"
+#include "synergy/AppUtil.h"
 #include "io/IStream.h"
 #include "base/Log.h"
 #include "base/IEventQueue.h"
@@ -129,8 +130,10 @@ ServerProxy::handleData(const Event&, void*)
 
         case kUnknown:
             LOG((CLOG_ERR "invalid message from server: %c%c%c%c", code[0], code[1], code[2], code[3]));
-            m_client->disconnect("invalid message from server");
-            return;
+            // not possible to determine message boundaries
+            // read the whole stream to discard unkonwn data
+            while (m_stream->read(nullptr, 4));
+            break;
 
         case kDisconnect:
             return;
@@ -188,25 +191,25 @@ ServerProxy::parseHandshakeMessage(const UInt8* code)
         ProtocolUtil::readf(m_stream,
                         kMsgEIncompatible + 4, &major, &minor);
         LOG((CLOG_ERR "server has incompatible version %d.%d", major, minor));
-        m_client->disconnect("server has incompatible version");
+        m_client->refuseConnection("server has incompatible version");
         return kDisconnect;
     }
 
     else if (memcmp(code, kMsgEBusy, 4) == 0) {
         LOG((CLOG_ERR "server already has a connected client with name \"%s\"", m_client->getName().c_str()));
-        m_client->disconnect("server already has a connected client with our name");
+        m_client->refuseConnection("server already has a connected client with our name");
         return kDisconnect;
     }
 
     else if (memcmp(code, kMsgEUnknown, 4) == 0) {
         LOG((CLOG_ERR "server refused client with name \"%s\"", m_client->getName().c_str()));
-        m_client->disconnect("server refused client with our name");
+        m_client->refuseConnection("server refused client with our name");
         return kDisconnect;
     }
 
     else if (memcmp(code, kMsgEBad, 4) == 0) {
         LOG((CLOG_ERR "server disconnected due to a protocol error"));
-        m_client->disconnect("server reported a protocol error");
+        m_client->refuseConnection("server reported a protocol error");
         return kDisconnect;
     }
     else {
@@ -302,6 +305,9 @@ ServerProxy::parseMessage(const UInt8* code)
     }
     else if (memcmp(code, kMsgDDragInfo, 4) == 0) {
         dragInfoReceived();
+    }
+    else if (memcmp(code, kMsgDSecureInputNotification, 4) == 0) {
+        secureInputNotification();
     }
 
     else if (memcmp(code, kMsgCClose, 4) == 0) {
@@ -905,4 +911,20 @@ ServerProxy::sendDragInfo(UInt32 fileCount, const char* info, size_t size)
 {
     String data(info, size);
     ProtocolUtil::writef(m_stream, kMsgDDragInfo, fileCount, &data);
+}
+
+void
+ServerProxy::secureInputNotification()
+{
+    String app;
+    ProtocolUtil::readf(m_stream, kMsgDSecureInputNotification + 4, &app);
+
+    String secureInputNotificationBody =
+        "'Secure input' enabled by " + app + " on the server. " \
+        "To fix the keyboard, " + app + " must be closed.";
+
+    // display this notification on the client
+    AppUtil::instance().showNotification(
+                "The keyboard may stop working.",
+                secureInputNotificationBody);
 }

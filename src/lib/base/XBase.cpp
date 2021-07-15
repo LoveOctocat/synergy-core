@@ -47,7 +47,7 @@ const char*
 XBase::what() const _NOEXCEPT
 {
     const char* what = std::runtime_error::what();
-    if (strlen(what) == 0) {
+    if (strlen(what) == 0) {  // Compliant: we made sure that what variable ended with null(std what func return pointer to a null-terminated string)
         m_what = getWhat();
         return m_what.c_str();
     }
@@ -69,6 +69,7 @@ XBase::format(const char* /*id*/, const char* fmt, ...) const throw()
     }
     catch (...) {
         // ignore
+        result.clear();
     }
     va_end(args);
 

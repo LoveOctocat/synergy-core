@@ -45,14 +45,15 @@ namespace GUI {
             ///@brief An Enumeration of all the scopes available
             enum Scope { kCurrent, kSystem, kUser};
 
-            /// @brief The choice selected when saving.
-            enum SaveChoice { kSave, kCancel, kSaveToUser};
-
             /// @brief Checks if the setting exists
             /// @param [in] name The name of the setting to check
             /// @param [in] scope The scope to search in
             /// @return bool True if the current scope has the named setting
             bool hasSetting(const QString& name, Scope scope = kCurrent) const;
+
+            /// @brief Checks if the current scope settings writable
+            /// @return bool True if the current scope writable
+            bool isWritable() const;
 
             /// @brief Sets the value of a setting
             /// @param [in] name The Setting to be saved
@@ -81,9 +82,6 @@ namespace GUI {
             /// @brief trigger a config save across all registered classes
             void globalSave();
 
-            /// @brief Saves the settings to file
-            void save();
-
             /// @brief Returns the current scopes settings object
             ///         If more specialize control into the settings is needed this can provide
             ///         direct access to the settings file handler
@@ -100,12 +98,6 @@ namespace GUI {
             /// @brief Checks if any registered class has any unsaved changes
             /// @return bool True if any registered class has unsaved changes
             bool unsavedChanges() const;
-
-            /// @brief If the scope is set to system, this function will query the user
-            ///         if they want to continue saving to global scope or switch to user scope
-            ///         if the scope is set to User the function will just return Save
-            /// @return SaveChoice The choice that was selected, or Save if the scope is user already
-            SaveChoice checkSystemSave() const;
 
         protected:
 
@@ -130,10 +122,6 @@ namespace GUI {
 
             /// @brief the pointer of the ConfigWriter for singolton use
             static ConfigWriter* s_pConfiguration;
-
-            /// @brief Returns the OS specific settings ini file location
-            static QString getSystemSettingPath();
-
 
             /// @brief deletes pointers and sets the value to null
             template<class T> static inline void destroy(T*& p) { delete p; p = 0; }

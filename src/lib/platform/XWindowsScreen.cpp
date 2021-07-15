@@ -2,11 +2,11 @@
  * synergy -- mouse and keyboard sharing utility
  * Copyright (C) 2012-2016 Symless Ltd.
  * Copyright (C) 2002 Chris Schoeneman
- * 
+ *
  * This package is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * found in the file LICENSE that should have accompanied this file.
- * 
+ *
  * This package is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -26,6 +26,8 @@
 #include "synergy/Clipboard.h"
 #include "synergy/KeyMap.h"
 #include "synergy/XScreen.h"
+#include "synergy/ArgsBase.h"
+#include "synergy/App.h"
 #include "arch/XArch.h"
 #include "arch/Arch.h"
 #include "base/Log.h"
@@ -37,6 +39,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <algorithm>
+#include <thread>
 #if X_DISPLAY_MISSING
 #	error X11 is required to build synergy
 #else
@@ -128,11 +131,11 @@ XWindowsScreen::XWindowsScreen(
 
 	if (mouseScrollDelta==0) m_mouseScrollDelta=120;
 	s_screen = this;
-	
+
 	if (!disableXInitThreads) {
 	  // initializes Xlib support for concurrent threads.
 	  if (XInitThreads() == 0)
-	    throw XArch("XInitThreads() returned zero");
+		throw XArch("XInitThreads() returned zero");
 	} else {
 		LOG((CLOG_DEBUG "skipping XInitThreads()"));
 	}
@@ -244,6 +247,12 @@ XWindowsScreen::enable()
 		// warp the mouse to the cursor center
 		fakeMouseMove(m_xCenter, m_yCenter);
 	}
+
+	// disable sleep if the flag is set
+	if (App::instance().argsBase().m_preventSleep &&
+			!disableIdleSleep()) {
+		LOG((CLOG_INFO "Failed to prevent system from going to sleep"));
+	}
 }
 
 void
@@ -261,6 +270,12 @@ XWindowsScreen::disable()
 	// restore auto-repeat state
 	if (!m_isPrimary && m_autoRepeat) {
 		//XAutoRepeatOn(m_display);
+	}
+
+	// enable sleep when the display is disabled
+	if (App::instance().argsBase().m_preventSleep &&
+			!enableIdleSleep()) {
+		LOG((CLOG_INFO "Failed to enable system idle sleep"));
 	}
 }
 
@@ -288,21 +303,21 @@ XWindowsScreen::enter()
 	CARD16 powerlevel;
 	BOOL enabled;
 	if (DPMSQueryExtension(m_display, &dummy, &dummy) &&
-	    DPMSCapable(m_display) &&
-	    DPMSInfo(m_display, &powerlevel, &enabled))
+		DPMSCapable(m_display) &&
+		DPMSInfo(m_display, &powerlevel, &enabled))
 	{
 		if (enabled && powerlevel != DPMSModeOn)
 			DPMSForceLevel(m_display, DPMSModeOn);
 	}
 	#endif
-	
+
 	// unmap the hider/grab window.  this also ungrabs the mouse and
 	// keyboard if they're grabbed.
 	XUnmapWindow(m_display, m_window);
 
 /* maybe call this if entering for the screensaver
 	// set keyboard focus to root window.  the screensaver should then
-	// pick up key events for when the user enters a password to unlock. 
+	// pick up key events for when the user enters a password to unlock.
 	XSetInputFocus(m_display, PointerRoot, PointerRoot, CurrentTime);
 */
 
@@ -473,6 +488,13 @@ bool
 XWindowsScreen::isPrimary() const
 {
 	return m_isPrimary;
+}
+
+String
+XWindowsScreen::getSecureInputApp() const
+{
+	// ignore on Linux
+	return "";
 }
 
 void*
@@ -858,6 +880,12 @@ XWindowsScreen::fakeMouseWheel(SInt32, SInt32 yDelta) const
 	// XXX -- support x-axis scrolling
 	if (yDelta == 0) {
 		return;
+	}
+
+	// use mouse scroll direction for inversion
+	if( m_scrollDirectionMouse < 0 )
+	{
+		yDelta = -yDelta;
 	}
 
 	// choose button depending on rotation direction
@@ -1318,7 +1346,7 @@ XWindowsScreen::handleSystemEvent(const Event& event, void*)
 					XFreeEventData(m_display, cookie);
 					return;
 			}
-        		XFreeEventData(m_display, cookie);
+				XFreeEventData(m_display, cookie);
 		}
 	}
 #endif
@@ -1525,9 +1553,9 @@ XWindowsScreen::onKeyPress(XKeyEvent& xkey)
 							false, false, key, mask, 1, keycode);
 		}
 	}
-    else {
+	else {
 		LOG((CLOG_DEBUG1 "can't map keycode to key id"));
-    }
+	}
 }
 
 void
@@ -1617,11 +1645,13 @@ XWindowsScreen::onMouseRelease(const XButtonEvent& xbutton)
 	}
 	else if (xbutton.button == 4) {
 		// wheel forward (away from user)
-		sendEvent(m_events->forIPrimaryScreen().wheel(), WheelInfo::alloc(0, 120));
+		// invert for natural scroll setting
+		sendEvent(m_events->forIPrimaryScreen().wheel(), WheelInfo::alloc(0, 120 * m_scrollDirectionMouse));
 	}
 	else if (xbutton.button == 5) {
 		// wheel backward (toward user)
-		sendEvent(m_events->forIPrimaryScreen().wheel(), WheelInfo::alloc(0, -120));
+		// invert for natural scroll setting
+		sendEvent(m_events->forIPrimaryScreen().wheel(), WheelInfo::alloc(0, -120 * m_scrollDirectionMouse));
 	}
 	// XXX -- support x-axis scrolling
 }
@@ -1848,7 +1878,7 @@ XWindowsScreen::doSelectEvents(Window w) const
 	// select events of interest.  do this before querying the tree so
 	// we'll get notifications of children created after the XQueryTree()
 	// so we won't miss them.
-       XSelectInput(m_display, w, mask);
+	   XSelectInput(m_display, w, mask);
 
 	// recurse on child windows
 	Window rw, pw, *cw;
@@ -2140,9 +2170,56 @@ XWindowsScreen::selectXIRawMotion()
 	mask.mask = (unsigned char*)calloc(mask.mask_len, sizeof(char));
 	mask.deviceid = XIAllMasterDevices;
 	memset(mask.mask, 0, 2);
-    XISetMask(mask.mask, XI_RawKeyRelease);
+	XISetMask(mask.mask, XI_RawKeyRelease);
 	XISetMask(mask.mask, XI_RawMotion);
 	XISelectEvents(m_display, DefaultRootWindow(m_display), &mask, 1);
 	free(mask.mask);
 }
 #endif
+
+void
+XWindowsScreen::updateScrollDirection()
+{
+	if (m_shouldUpdateScrollDirection)
+	{
+		m_shouldUpdateScrollDirection = false;
+
+		std::thread scrollDirectionUpdateThread([this]{
+			std::string mouseScroll = ArchSystemUnix::runCommand("gsettings get org.gnome.desktop.peripherals.mouse natural-scroll");
+			if(mouseScroll == "false\n")
+				m_scrollDirectionMouse = 1;
+			else if(mouseScroll == "true\n")
+				m_scrollDirectionMouse = -1;
+
+			std::string touchpadScroll = ArchSystemUnix::runCommand("gsettings get org.gnome.desktop.peripherals.touchpad natural-scroll");
+			if(touchpadScroll == "false\n")
+				m_scrollDirectionTouchpad = 1;
+			else if(touchpadScroll == "true\n")
+				m_scrollDirectionTouchpad = -1;
+		});
+		scrollDirectionUpdateThread.detach();
+	}
+}
+
+bool XWindowsScreen::sleepInhibitCall(bool state, ArchSystemUnix::InhibitScreenServices serviceID)
+{
+	std::string error;
+	if(!ArchSystemUnix::DBusInhibitScreenCall(serviceID, state, error))
+	{
+		LOG((CLOG_DEBUG "DBus inhibit error %s", error.c_str()));
+		return false;
+	}
+	return true;
+}
+
+bool XWindowsScreen::disableIdleSleep()
+{
+	return  sleepInhibitCall(true, ArchSystemUnix::InhibitScreenServices::kScreenSaver) ||
+			sleepInhibitCall(true, ArchSystemUnix::InhibitScreenServices::kSessionManager);
+}
+
+bool XWindowsScreen::enableIdleSleep()
+{
+	return  sleepInhibitCall(false, ArchSystemUnix::InhibitScreenServices::kScreenSaver) ||
+			sleepInhibitCall(false, ArchSystemUnix::InhibitScreenServices::kSessionManager);
+}
