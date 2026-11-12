@@ -1,93 +1,61 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2015-2016 Symless Ltd.
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2025 Deskflow Developers
+ * SPDX-FileCopyrightText: (C) 2015 - 2016 Synergy App Ltd
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #include "SecureListenSocket.h"
 
 #include "SecureSocket.h"
-#include "net/NetworkAddress.h"
+#include "arch/Arch.h"
+#include "arch/ArchException.h"
+#include "common/Settings.h"
 #include "net/SocketMultiplexer.h"
-#include "net/TSocketMultiplexerMethodJob.h"
-#include "arch/XArch.h"
-#include "synergy/ArgParser.h"
-#include "synergy/ArgsBase.h"
-
-static const char s_certificateDir[] = { "SSL" };
-static const char s_certificateFilename[] = { "Synergy.pem" };
 
 //
 // SecureListenSocket
 //
 
 SecureListenSocket::SecureListenSocket(
-        IEventQueue* events,
-        SocketMultiplexer* socketMultiplexer,
-        IArchNetwork::EAddressFamily family) :
-    TCPListenSocket(events, socketMultiplexer, family)
+    IEventQueue *events, SocketMultiplexer *socketMultiplexer, IArchNetwork::AddressFamily family,
+    SecurityLevel securityLevel
+)
+    : TCPListenSocket(events, socketMultiplexer, family),
+      m_securityLevel{securityLevel}
+
 {
+  // do nothing
 }
 
-IDataSocket*
-SecureListenSocket::accept()
+std::unique_ptr<IDataSocket> SecureListenSocket::accept()
 {
-    SecureSocket* socket = NULL;
-    try {
-        socket = new SecureSocket(
-                        m_events,
-                        m_socketMultiplexer,
-                        ARCH->acceptSocket(m_socket, NULL));
-        socket->initSsl(true);
+  std::unique_ptr<SecureSocket> secureSocket;
+  try {
+    secureSocket = std::make_unique<SecureSocket>(
+        events(), socketMultiplexer(), ARCH->acceptSocket(socket(), nullptr), m_securityLevel
+    );
+    secureSocket->initSsl(true);
 
-        if (socket != NULL) {
-            setListeningJob();
-        }
+    setListeningJob();
 
-        //default location of the TLS cert file in users dir
-        String certificateFilename = synergy::string::sprintf("%s/%s/%s",
-                                                              ARCH->getProfileDirectory().c_str(),
-                                                              s_certificateDir,
-                                                              s_certificateFilename);
-
-        //if the tls cert option is set use that for the certificate file
-        if (!ArgParser::argsBase().m_tlsCertFile.empty()) {
-            certificateFilename = ArgParser::argsBase().m_tlsCertFile;
-        }
-
-        bool loaded = socket->loadCertificates(certificateFilename);
-        if (!loaded) {
-            delete socket;
-            return NULL;
-        }
-
-        socket->secureAccept();
-
-        return dynamic_cast<IDataSocket*>(socket);
+    // default location of the TLS cert file in users dir
+    if (!secureSocket->loadCertificate(Settings::value(Settings::Security::Certificate).toString())) {
+      return nullptr;
     }
-    catch (XArchNetwork&) {
-        if (socket != NULL) {
-            delete socket;
-            setListeningJob();
-        }
-        return NULL;
+
+    secureSocket->secureAccept();
+
+    return secureSocket;
+  } catch (ArchNetworkException &) {
+    if (secureSocket) {
+      setListeningJob();
     }
-    catch (std::exception &ex) {
-        if (socket != NULL) {
-            delete socket;
-            setListeningJob();
-        }
-        throw ex;
+    return nullptr;
+  } catch (std::exception &ex) {
+    if (secureSocket) {
+      setListeningJob();
     }
+    throw ex;
+  }
 }

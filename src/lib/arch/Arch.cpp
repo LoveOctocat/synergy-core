@@ -1,60 +1,57 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2002 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2025 Deskflow Developers
+ * SPDX-FileCopyrightText: (C) 2012 - 2016 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2002 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #include "arch/Arch.h"
+
+#include <thread>
+
+#if defined(Q_OS_WIN)
+#include "arch/win32/ArchMiscWindows.h"
+#endif
 
 //
 // Arch
 //
 
-Arch*                    Arch::s_instance = NULL;
+Arch *Arch::s_instance = nullptr;
 
 Arch::Arch()
 {
-    assert(s_instance == NULL);
-    s_instance = this;
+  assert(s_instance == nullptr);
+  s_instance = this;
 }
 
-Arch::Arch(Arch* arch)
+#if defined(Q_OS_WIN)
+void Arch::init()
 {
-    s_instance = arch;
+  ARCH_NETWORK::init();
+  ArchMiscWindows::init();
 }
-
-Arch::~Arch()
-{
-#if SYSAPI_WIN32
-    ArchMiscWindows::cleanup();
 #endif
+
+Arch *Arch::getInstance()
+{
+  assert(s_instance != nullptr);
+  return s_instance;
 }
 
-void
-Arch::init()
+void Arch::sleep(double timeout)
 {
-    ARCH_NETWORK::init();
-#if SYSAPI_WIN32
-    ARCH_TASKBAR::init();
-    ArchMiscWindows::init();
-#endif
+  ARCH->testCancelThread();
+  if (timeout < 0.0)
+    return;
+  const auto msec = static_cast<uint64_t>(timeout * 1000);
+  std::this_thread::sleep_for(std::chrono::milliseconds(msec));
 }
 
-Arch*
-Arch::getInstance()
+double Arch::time()
 {
-    assert(s_instance != NULL);
-    return s_instance;
+  auto sinceEpoch = std::chrono::steady_clock::now().time_since_epoch();
+  auto uSecSinceEpoch = std::chrono::duration_cast<std::chrono::microseconds>(sinceEpoch).count();
+  return uSecSinceEpoch / 1000000.0;
 }

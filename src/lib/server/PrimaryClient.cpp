@@ -1,274 +1,227 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2002 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2012 - 2016 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2002 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #include "server/PrimaryClient.h"
 
-#include "synergy/Screen.h"
-#include "synergy/Clipboard.h"
 #include "base/Log.h"
-
+#include "deskflow/Computer.h"
 //
 // PrimaryClient
 //
 
-PrimaryClient::PrimaryClient(const String& name, synergy::Screen* screen) :
-    BaseClientProxy(name),
-    m_screen(screen),
-    m_fakeInputCount(0)
+PrimaryClient::PrimaryClient(const std::string &name, deskflow::Computer *computer)
+    : BaseClientProxy(name),
+      m_computer(computer)
 {
-    // all clipboards are clean
-    for (UInt32 i = 0; i < kClipboardEnd; ++i) {
-        m_clipboardDirty[i] = false;
-    }
+  // do nothing
 }
 
-PrimaryClient::~PrimaryClient()
+void PrimaryClient::reconfigure(uint32_t activeSides)
 {
-    // do nothing
+  m_computer->reconfigure(activeSides);
 }
 
-void
-PrimaryClient::reconfigure(UInt32 activeSides)
+uint32_t PrimaryClient::registerHotKey(KeyID key, KeyModifierMask mask)
 {
-    m_screen->reconfigure(activeSides);
+  return m_computer->registerHotKey(key, mask);
 }
 
-UInt32
-PrimaryClient::registerHotKey(KeyID key, KeyModifierMask mask)
+void PrimaryClient::unregisterHotKey(uint32_t id)
 {
-    return m_screen->registerHotKey(key, mask);
+  m_computer->unregisterHotKey(id);
 }
 
-void
-PrimaryClient::unregisterHotKey(UInt32 id)
+void PrimaryClient::fakeInputBegin()
 {
-    m_screen->unregisterHotKey(id);
+  if (++m_fakeInputCount == 1) {
+    m_computer->fakeInputBegin();
+  }
 }
 
-void
-PrimaryClient::fakeInputBegin()
+void PrimaryClient::fakeInputEnd()
 {
-    if (++m_fakeInputCount == 1) {
-        m_screen->fakeInputBegin();
-    }
+  if (--m_fakeInputCount == 0) {
+    m_computer->fakeInputEnd();
+  }
 }
 
-void
-PrimaryClient::fakeInputEnd()
+int32_t PrimaryClient::getJumpZoneSize() const
 {
-    if (--m_fakeInputCount == 0) {
-        m_screen->fakeInputEnd();
-    }
+  return m_computer->getJumpZoneSize();
 }
 
-SInt32
-PrimaryClient::getJumpZoneSize() const
+void PrimaryClient::getCursorCenter(int32_t &x, int32_t &y) const
 {
-    return m_screen->getJumpZoneSize();
+  m_computer->getCursorCenter(x, y);
 }
 
-void
-PrimaryClient::getCursorCenter(SInt32& x, SInt32& y) const
+KeyModifierMask PrimaryClient::getToggleMask() const
 {
-    m_screen->getCursorCenter(x, y);
+  return m_computer->pollActiveModifiers();
 }
 
-KeyModifierMask
-PrimaryClient::getToggleMask() const
+bool PrimaryClient::isLockedToComputer() const
 {
-    return m_screen->pollActiveModifiers();
+  return m_computer->isLockedToComputer();
 }
 
-bool
-PrimaryClient::isLockedToScreen() const
+void *PrimaryClient::getEventTarget() const
 {
-    return m_screen->isLockedToScreen();
+  return m_computer->getEventTarget();
 }
 
-void*
-PrimaryClient::getEventTarget() const
+bool PrimaryClient::getClipboard(ClipboardID id, IClipboard *clipboard) const
 {
-    return m_screen->getEventTarget();
+  return m_computer->getClipboard(id, clipboard);
 }
 
-bool
-PrimaryClient::getClipboard(ClipboardID id, IClipboard* clipboard) const
+void PrimaryClient::getShape(int32_t &x, int32_t &y, int32_t &width, int32_t &height) const
 {
-    return m_screen->getClipboard(id, clipboard);
+  m_computer->getShape(x, y, width, height);
 }
 
-void
-PrimaryClient::getShape(SInt32& x, SInt32& y,
-                SInt32& width, SInt32& height) const
+void PrimaryClient::getCursorPos(int32_t &x, int32_t &y) const
 {
-    m_screen->getShape(x, y, width, height);
+  m_computer->getCursorPos(x, y);
 }
 
-void
-PrimaryClient::getCursorPos(SInt32& x, SInt32& y) const
+void PrimaryClient::enable()
 {
-    m_screen->getCursorPos(x, y);
+  m_computer->enable();
 }
 
-void
-PrimaryClient::enable()
+void PrimaryClient::disable()
 {
-    m_screen->enable();
+  m_computer->disable();
 }
 
-void
-PrimaryClient::disable()
+void PrimaryClient::enter(int32_t xAbs, int32_t yAbs, uint32_t seqNum, KeyModifierMask mask, bool screensaver)
 {
-    m_screen->disable();
+  m_computer->setSequenceNumber(seqNum);
+  if (!screensaver) {
+    m_computer->warpCursor(xAbs, yAbs);
+  }
+  m_computer->enter(mask);
 }
 
-void
-PrimaryClient::enter(SInt32 xAbs, SInt32 yAbs,
-                UInt32 seqNum, KeyModifierMask mask, bool screensaver)
+bool PrimaryClient::leave()
 {
-    m_screen->setSequenceNumber(seqNum);
-    if (!screensaver) {
-        m_screen->warpCursor(xAbs, yAbs);
-    }
-    m_screen->enter(mask);
+  return m_computer->leave();
 }
 
-bool
-PrimaryClient::leave()
+void PrimaryClient::setClipboard(ClipboardID id, const IClipboard *clipboard)
 {
-    return m_screen->leave();
+  // ignore if this clipboard is already clean
+  if (m_clipboardDirty[id]) {
+    // this clipboard is now clean
+    m_clipboardDirty[id] = false;
+
+    // set clipboard
+    m_computer->setClipboard(id, clipboard);
+  }
 }
 
-void
-PrimaryClient::setClipboard(ClipboardID id, const IClipboard* clipboard)
+void PrimaryClient::grabClipboard(ClipboardID id)
 {
-    // ignore if this clipboard is already clean
-    if (m_clipboardDirty[id]) {
-        // this clipboard is now clean
-        m_clipboardDirty[id] = false;
+  // grab clipboard
+  m_computer->grabClipboard(id);
 
-        // set clipboard
-        m_screen->setClipboard(id, clipboard);
-    }
+  // clipboard is dirty (because someone else owns it now)
+  m_clipboardDirty[id] = true;
 }
 
-void
-PrimaryClient::grabClipboard(ClipboardID id)
+void PrimaryClient::setClipboardDirty(ClipboardID id, bool dirty)
 {
-    // grab clipboard
-    m_screen->grabClipboard(id);
-
-    // clipboard is dirty (because someone else owns it now)
-    m_clipboardDirty[id] = true;
+  m_clipboardDirty[id] = dirty;
 }
 
-void
-PrimaryClient::setClipboardDirty(ClipboardID id, bool dirty)
+void PrimaryClient::keyDown(KeyID key, KeyModifierMask mask, KeyButton button, const std::string &)
 {
-    m_clipboardDirty[id] = dirty;
+  if (m_fakeInputCount > 0) {
+    // XXX -- don't forward keystrokes to primary computer for now
+    (void)key;
+    (void)mask;
+    (void)button;
+    //        m_computer->keyDown(key, mask, button);
+  }
 }
 
-void
-PrimaryClient::keyDown(KeyID key, KeyModifierMask mask, KeyButton button)
+void PrimaryClient::keyRepeat(KeyID, KeyModifierMask, int32_t, KeyButton, const std::string &)
 {
-    if (m_fakeInputCount > 0) {
-// XXX -- don't forward keystrokes to primary screen for now
-        (void)key;
-        (void)mask;
-        (void)button;
-//        m_screen->keyDown(key, mask, button);
-    }
+  // ignore
 }
 
-void
-PrimaryClient::keyRepeat(KeyID, KeyModifierMask, SInt32, KeyButton)
+void PrimaryClient::keyUp(KeyID key, KeyModifierMask mask, KeyButton button)
 {
-    // ignore
+  if (m_fakeInputCount > 0) {
+    // XXX -- don't forward keystrokes to primary screen for now
+    (void)key;
+    (void)mask;
+    (void)button;
+    //        m_computer->keyUp(key, mask, button);
+  }
 }
 
-void
-PrimaryClient::keyUp(KeyID key, KeyModifierMask mask, KeyButton button)
+void PrimaryClient::mouseDown(ButtonID)
 {
-    if (m_fakeInputCount > 0) {
-// XXX -- don't forward keystrokes to primary screen for now
-        (void)key;
-        (void)mask;
-        (void)button;
-//        m_screen->keyUp(key, mask, button);
-    }
+  // ignore
 }
 
-void
-PrimaryClient::mouseDown(ButtonID)
+void PrimaryClient::mouseUp(ButtonID)
 {
-    // ignore
+  // ignore
 }
 
-void
-PrimaryClient::mouseUp(ButtonID)
+void PrimaryClient::mouseMove(int32_t x, int32_t y)
 {
-    // ignore
+  m_computer->warpCursor(x, y);
 }
 
-void
-PrimaryClient::mouseMove(SInt32 x, SInt32 y)
+void PrimaryClient::mouseRelativeMove(int32_t, int32_t)
 {
-    m_screen->warpCursor(x, y);
+  // ignore
 }
 
-void
-PrimaryClient::mouseRelativeMove(SInt32, SInt32)
+void PrimaryClient::mouseWheel(int32_t, int32_t)
 {
-    // ignore
+  // ignore
 }
 
-void
-PrimaryClient::mouseWheel(SInt32, SInt32)
+void PrimaryClient::screensaver(bool)
 {
-    // ignore
+  // ignore
 }
 
-void
-PrimaryClient::screensaver(bool)
+void PrimaryClient::sendDragInfo(uint32_t fileCount, const char *info, size_t size)
 {
-    // ignore
+  // ignore
 }
 
-void
-PrimaryClient::sendDragInfo(UInt32 fileCount, const char* info, size_t size)
+void PrimaryClient::fileChunkSending(uint8_t mark, char *data, size_t dataSize)
 {
-    // ignore
+  // ignore
 }
 
-void
-PrimaryClient::fileChunkSending(UInt8 mark, char* data, size_t dataSize)
+std::string PrimaryClient::getSecureInputApp() const
 {
-    // ignore
+  return m_computer->getSecureInputApp();
 }
 
-void
-PrimaryClient::resetOptions()
+void PrimaryClient::secureInputNotification(const std::string &app) const
 {
-    m_screen->resetOptions();
+  LOG_INFO("application \"%s\" is blocking the keyboard", app.c_str());
 }
 
-void
-PrimaryClient::setOptions(const OptionsList& options)
+void PrimaryClient::resetOptions()
 {
-    m_screen->setOptions(options);
+  m_computer->resetOptions();
+}
+
+void PrimaryClient::setOptions(const OptionsList &options)
+{
+  m_computer->setOptions(options);
 }

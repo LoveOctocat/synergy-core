@@ -1,79 +1,45 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2002 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2012 - 2016 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2002 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #include "platform/XWindowsClipboardTextConverter.h"
 
-#include "base/Unicode.h"
+#include <QString>
 
 //
 // XWindowsClipboardTextConverter
 //
 
-XWindowsClipboardTextConverter::XWindowsClipboardTextConverter(
-                Display* display, const char* name) :
-    m_atom(XInternAtom(display, name, False))
+XWindowsClipboardTextConverter::XWindowsClipboardTextConverter(Display *display, const char *name)
+    : m_atom(XInternAtom(display, name, False))
 {
-    // do nothing
+  // do nothing
 }
 
-XWindowsClipboardTextConverter::~XWindowsClipboardTextConverter()
+IClipboard::Format XWindowsClipboardTextConverter::getFormat() const
 {
-    // do nothing
+  return IClipboard::Format::Text;
 }
 
-IClipboard::EFormat
-XWindowsClipboardTextConverter::getFormat() const
+Atom XWindowsClipboardTextConverter::getAtom() const
 {
-    return IClipboard::kText;
+  return m_atom;
 }
 
-Atom
-XWindowsClipboardTextConverter::getAtom() const
+int XWindowsClipboardTextConverter::getDataSize() const
 {
-    return m_atom;
+  return 8;
 }
 
-int
-XWindowsClipboardTextConverter::getDataSize() const
+std::string XWindowsClipboardTextConverter::fromIClipboard(const std::string &data) const
 {
-    return 8;
+  return QString::fromStdString(data).toLatin1().toStdString();
 }
 
-String
-XWindowsClipboardTextConverter::fromIClipboard(const String& data) const
+std::string XWindowsClipboardTextConverter::toIClipboard(const std::string &data) const
 {
-    return Unicode::UTF8ToText(data);
-}
-
-String
-XWindowsClipboardTextConverter::toIClipboard(const String& data) const
-{
-    // convert to UTF-8
-    bool errors;
-    String utf8 = Unicode::textToUTF8(data, &errors);
-
-    // if there were decoding errors then, to support old applications
-    // that don't understand UTF-8 but can report the exact binary
-    // UTF-8 representation, see if the data appears to be UTF-8.  if
-    // so then use it as is.
-    if (errors && Unicode::isUTF8(data)) {
-        return data;
-    }
-
-    return utf8;
+  return QString::fromLatin1(data).toUtf8().toStdString();
 }

@@ -1,39 +1,26 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2003 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2012 - 2016 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2003 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #pragma once
 
-#include "synergy/KeyState.h"
-#include "common/stdmap.h"
-#include "common/stdvector.h"
+#include "deskflow/KeyState.h"
+#include "platform/XWindowsConfig.h"
 
-#if X_DISPLAY_MISSING
-#    error X11 is required to build synergy
+#include <map>
+#include <vector>
+
+#include <X11/Xlib.h>
+#if HAVE_X11_EXTENSIONS_XTEST_H
+#include <X11/extensions/XTest.h>
 #else
-#    include <X11/Xlib.h>
-#    if HAVE_X11_EXTENSIONS_XTEST_H
-#        include <X11/extensions/XTest.h>
-#    else
-#        error The XTest extension is required to build synergy
-#    endif
-#    if HAVE_XKB_EXTENSION
-#        include <X11/extensions/XKBstr.h>
-#    endif
+#error The XTest extension is required to build deskflow
+#endif
+#if HAVE_XKB_EXTENSION
+#include <X11/extensions/XKBstr.h>
 #endif
 
 class IEventQueue;
@@ -42,133 +29,125 @@ class IEventQueue;
 /*!
 A key state for X Windows.
 */
-class XWindowsKeyState : public KeyState {
+class XWindowsKeyState : public KeyState
+{
 public:
-    typedef std::vector<int> KeycodeList;
-    enum {
-        kGroupPoll       = -1,
-        kGroupPollAndSet = -2
-    };
+  using KeycodeList = std::vector<int>;
+  inline static const auto s_groupPoll = -1;
+  inline static const auto s_groupPollAndSet = -2;
 
-    XWindowsKeyState(Display*, bool useXKB, IEventQueue* events);
-    XWindowsKeyState(Display*, bool useXKB,
-        IEventQueue* events, synergy::KeyMap& keyMap);
-    ~XWindowsKeyState();
+  XWindowsKeyState(Display *, bool useXKB, IEventQueue *events);
+  XWindowsKeyState(Display *, bool useXKB, IEventQueue *events, deskflow::KeyMap &keyMap);
+  ~XWindowsKeyState() override;
 
-    //! @name modifiers
-    //@{
+  //! @name modifiers
+  //@{
 
-    //! Set active group
-    /*!
-    Sets the active group to \p group.  This is the group returned by
-    \c pollActiveGroup().  If \p group is \c kGroupPoll then
-    \c pollActiveGroup() will really poll, but that's a slow operation
-    on X11.  If \p group is \c kGroupPollAndSet then this will poll the
-    active group now and use it for future calls to \c pollActiveGroup().
-    */
-    void                setActiveGroup(SInt32 group);
+  //! Set active group
+  /*!
+  Sets the active group to \p group.  This is the group returned by
+  \c pollActiveGroup().  If \p group is \c s_groupPoll then
+  \c pollActiveGroup() will really poll, but that's a slow operation
+  on X11.  If \p group is \c s_groupPollAndSet then this will poll the
+  active group now and use it for future calls to \c pollActiveGroup().
+  */
+  void setActiveGroup(int32_t group);
 
-    //! Set the auto-repeat state
-    /*!
-    Sets the auto-repeat state.
-    */
-    void                setAutoRepeat(const XKeyboardState&);
+  //! Set the auto-repeat state
+  /*!
+  Sets the auto-repeat state.
+  */
+  void setAutoRepeat(const XKeyboardState &);
 
-    //@}
-    //! @name accessors
-    //@{
+  //@}
+  //! @name accessors
+  //@{
 
-    //! Convert X modifier mask to synergy mask
-    /*!
-    Returns the synergy modifier mask corresponding to the X modifier
-    mask in \p state.
-    */
-    KeyModifierMask        mapModifiersFromX(unsigned int state) const;
+  //! Convert X modifier mask to deskflow mask
+  /*!
+  Returns the deskflow modifier mask corresponding to the X modifier
+  mask in \p state.
+  */
+  KeyModifierMask mapModifiersFromX(unsigned int state) const;
 
-    //! Convert synergy modifier mask to X mask
-    /*!
-    Converts the synergy modifier mask to the corresponding X modifier
-    mask.  Returns \c true if successful and \c false if any modifier
-    could not be converted.
-    */
-    bool                mapModifiersToX(KeyModifierMask, unsigned int&) const;
+  //! Convert deskflow modifier mask to X mask
+  /*!
+  Converts the deskflow modifier mask to the corresponding X modifier
+  mask.  Returns \c true if successful and \c false if any modifier
+  could not be converted.
+  */
+  bool mapModifiersToX(KeyModifierMask, unsigned int &) const;
 
-    //! Convert synergy key to all corresponding X keycodes
-    /*!
-    Converts the synergy key \p key to all of the keycodes that map to
-    that key.
-    */
-    void                mapKeyToKeycodes(KeyID key,
-                            KeycodeList& keycodes) const;
+  //! Convert deskflow key to all corresponding X keycodes
+  /*!
+  Converts the deskflow key \p key to all of the keycodes that map to
+  that key.
+  */
+  void mapKeyToKeycodes(KeyID key, KeycodeList &keycodes) const;
 
-    //@}
+  //@}
 
-    // IKeyState overrides
-    virtual bool        fakeCtrlAltDel();
-    virtual KeyModifierMask
-                        pollActiveModifiers() const;
-    virtual SInt32        pollActiveGroup() const;
-    virtual void        pollPressedKeys(KeyButtonSet& pressedKeys) const;
+  // IKeyState overrides
+  bool fakeCtrlAltDel() override;
+  KeyModifierMask pollActiveModifiers() const override;
+  int32_t pollActiveGroup() const final;
+  void pollPressedKeys(KeyButtonSet &pressedKeys) const override;
 
 protected:
-    // KeyState overrides
-    virtual void        getKeyMap(synergy::KeyMap& keyMap);
-    virtual void        fakeKey(const Keystroke& keystroke);
+  // KeyState overrides
+  void getKeyMap(deskflow::KeyMap &keyMap) override;
+  void fakeKey(const Keystroke &keystroke) override;
 
 private:
-    void                init(Display* display, bool useXKB);
-    void                updateKeysymMap(synergy::KeyMap&);
-    void                updateKeysymMapXKB(synergy::KeyMap&);
-    bool                hasModifiersXKB() const;
-    int                    getEffectiveGroup(KeyCode, int group) const;
-    UInt32                getGroupFromState(unsigned int state) const;
+  void init(bool useXKB);
+  void updateKeysymMap(deskflow::KeyMap &);
+  void updateKeysymMapXKB(deskflow::KeyMap &);
+  bool hasModifiersXKB() const;
+  int getEffectiveGroup(KeyCode, int group) const;
+  uint32_t getGroupFromState(unsigned int state) const;
 
-    static void            remapKeyModifiers(KeyID, SInt32,
-                            synergy::KeyMap::KeyItem&, void*);
+  //! Create and send language change request to \p group by DBus interface
+  /*!
+  Returns the existence of needed DBus interface.
+  */
+  bool setCurrentLanguageWithDBus(int32_t group) const;
 
-private:
-    struct XKBModifierInfo {
-    public:
-        unsigned char    m_level;
-        UInt32            m_mask;
-        bool            m_lock;
-    };
-
-#ifdef TEST_ENV
-public: // yuck
-#endif
-    typedef std::vector<KeyModifierMask> KeyModifierMaskList;
+  static void remapKeyModifiers(KeyID, int32_t, deskflow::KeyMap::KeyItem &, void *);
 
 private:
-    typedef std::map<KeyModifierMask, unsigned int> KeyModifierToXMask;
-    typedef std::multimap<KeyID, KeyCode> KeyToKeyCodeMap;
-    typedef std::map<KeyCode, unsigned int> NonXKBModifierMap;
-    typedef std::map<UInt32, XKBModifierInfo> XKBModifierMap;
+  struct XKBModifierInfo
+  {
+  public:
+    unsigned char m_level;
+    uint32_t m_mask;
+    bool m_lock;
+  };
 
-    Display*            m_display;
+  using KeyModifierMaskList = std::vector<KeyModifierMask>;
+
+private:
+  using KeyModifierToXMask = std::map<KeyModifierMask, unsigned int>;
+  using KeyToKeyCodeMap = std::multimap<KeyID, KeyCode>;
+  using NonXKBModifierMap = std::map<KeyCode, unsigned int>;
+  using XKBModifierMap = std::map<uint32_t, XKBModifierInfo>;
+
+  Display *m_display;
 #if HAVE_XKB_EXTENSION
-    XkbDescPtr            m_xkb;
+  XkbDescPtr m_xkb;
 #endif
-    SInt32                m_group;
-    XKBModifierMap        m_lastGoodXKBModifiers;
-    NonXKBModifierMap    m_lastGoodNonXKBModifiers;
+  int32_t m_group;
+  XKBModifierMap m_lastGoodXKBModifiers;
+  NonXKBModifierMap m_lastGoodNonXKBModifiers;
 
-    // X modifier (bit number) to synergy modifier (mask) mapping
-    KeyModifierMaskList    m_modifierFromX;
+  // X modifier (bit number) to deskflow modifier (mask) mapping
+  KeyModifierMaskList m_modifierFromX = {};
 
-    // synergy modifier (mask) to X modifier (mask)
-    KeyModifierToXMask    m_modifierToX;
+  // deskflow modifier (mask) to X modifier (mask)
+  KeyModifierToXMask m_modifierToX;
 
-    // map KeyID to all keycodes that can synthesize that KeyID
-    KeyToKeyCodeMap        m_keyCodeFromKey;
+  // map KeyID to all keycodes that can synthesize that KeyID
+  KeyToKeyCodeMap m_keyCodeFromKey;
 
-    // autorepeat state
-    XKeyboardState        m_keyboardState;
-
-#ifdef TEST_ENV
-public:
-    SInt32                  group() const { return m_group; }
-    void                    group(const SInt32& group) { m_group = group; }
-    KeyModifierMaskList    modifierFromX() const { return m_modifierFromX; }
-#endif
+  // autorepeat state
+  XKeyboardState m_keyboardState;
 };

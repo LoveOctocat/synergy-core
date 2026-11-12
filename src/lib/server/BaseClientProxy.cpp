@@ -1,19 +1,8 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2006 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2012 - 2016 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2006 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #include "server/BaseClientProxy.h"
@@ -22,35 +11,24 @@
 // BaseClientProxy
 //
 
-BaseClientProxy::BaseClientProxy(const String& name) :
-    m_name(name),
-    m_x(0),
-    m_y(0)
+BaseClientProxy::BaseClientProxy(const std::string &name) : m_name(name)
 {
-    // do nothing
+  // do nothing
 }
 
-BaseClientProxy::~BaseClientProxy()
+void BaseClientProxy::setJumpCursorPos(int32_t x, int32_t y)
 {
-    // do nothing
+  m_x = x;
+  m_y = y;
 }
 
-void
-BaseClientProxy::setJumpCursorPos(SInt32 x, SInt32 y)
+void BaseClientProxy::getJumpCursorPos(int32_t &x, int32_t &y) const
 {
-    m_x = x;
-    m_y = y;
+  x = m_x;
+  y = m_y;
 }
 
-void
-BaseClientProxy::getJumpCursorPos(SInt32& x, SInt32& y) const
+std::string BaseClientProxy::getName() const
 {
-    x = m_x;
-    y = m_y;
-}
-
-String
-BaseClientProxy::getName() const
-{
-    return m_name;
+  return m_name;
 }

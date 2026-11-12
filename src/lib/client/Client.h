@@ -1,232 +1,247 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2002 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2025 - 2026 Deskflow Developers
+ * SPDX-FileCopyrightText: (C) 2012 - 2016, 2026 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2002 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #pragma once
 
-#include "synergy/IClient.h"
+#include "deskflow/IClient.h"
 
-#include "synergy/Clipboard.h"
-#include "synergy/DragInformation.h"
-#include "synergy/INode.h"
-#include "synergy/ClientArgs.h"
-#include "net/NetworkAddress.h"
+#include "base/Event.h"
 #include "base/EventTypes.h"
-#include "mt/CondVar.h"
+#include "common/Enums.h"
+#include "deskflow/IClipboard.h"
+#include "net/NetworkAddress.h"
 
+#include <climits>
+#include <string>
+
+class Event;
 class EventQueueTimer;
-namespace synergy { class Screen; }
+namespace deskflow {
+class Computer;
+}
 class ServerProxy;
 class IDataSocket;
 class ISocketFactory;
-namespace synergy { class IStream; }
+namespace deskflow {
+class IStream;
+}
 class IEventQueue;
 class Thread;
 class TCPSocket;
 
-//! Synergy client
+//! Deskflow client
 /*!
-This class implements the top-level client algorithms for synergy.
+This class implements the top-level client algorithms for deskflow.
 */
-class Client : public IClient, public INode {
+class Client : public IClient
+{
 public:
-    class FailInfo {
-    public:
-        FailInfo(const char* what) : m_retry(false), m_what(what) { }
-        bool            m_retry;
-        String            m_what;
+  class DisconnectRequest : public EventData
+  {
+  public:
+    enum class Kind
+    {
+      Disconnect,
+      Refuse
     };
 
-public:
-    /*!
-    This client will attempt to connect to the server using \p name
-    as its name and \p address as the server's address and \p factory
-    to create the socket.  \p screen is    the local screen.
-    */
-    Client(IEventQueue* events, const String& name,
-           const NetworkAddress& address, ISocketFactory* socketFactory,
-           synergy::Screen* screen, lib::synergy::ClientArgs const& args);
-    Client(Client const &) =delete;
-    Client(Client &&) =delete;
-    ~Client();
+    DisconnectRequest(Kind kind, const char *message);
+    DisconnectRequest(deskflow::core::ConnectionRefusal reason, const char *message);
 
-    Client& operator=(Client const &) =delete;
-    Client& operator=(Client &&) =delete;
+    Kind kind() const
+    {
+      return m_kind;
+    }
 
-    //! @name manipulators
-    //@{
+    deskflow::core::ConnectionRefusal refusalReason() const
+    {
+      return m_refusalReason;
+    }
 
-    //! Connect to server
-    /*!
-    Starts an attempt to connect to the server.  This is ignored if
-    the client is trying to connect or is already connected.
-    */
-    void                connect();
+    const char *message() const
+    {
+      return m_message.empty() ? nullptr : m_message.c_str();
+    }
 
-    //! Disconnect
-    /*!
-    Disconnects from the server with an optional error message.
-    */
-    void                disconnect(const char* msg);
+  private:
+    Kind m_kind = Kind::Disconnect;
+    deskflow::core::ConnectionRefusal m_refusalReason = deskflow::core::ConnectionRefusal::ProtocolError;
+    std::string m_message;
+  };
 
-    //! Notify of handshake complete
-    /*!
-    Notifies the client that the connection handshake has completed.
-    */
-    virtual void        handshakeComplete();
-
-    //! Received drag information
-    void                dragInfoReceived(UInt32 fileNum, String data);
-
-    //! Create a new thread and use it to send file to Server
-    void                sendFileToServer(const char* filename);
-    
-    //! Send dragging file information back to server
-    void                sendDragInfo(UInt32 fileCount, String& info, size_t size);
-
-    
-    //@}
-    //! @name accessors
-    //@{
-
-    //! Test if connected
-    /*!
-    Returns true iff the client is successfully connected to the server.
-    */
-    bool                isConnected() const;
-
-    //! Test if connecting
-    /*!
-    Returns true iff the client is currently attempting to connect to
-    the server.
-    */
-    bool                isConnecting() const;
-
-    //! Get address of server
-    /*!
-    Returns the address of the server the client is connected (or wants
-    to connect) to.
-    */
-    NetworkAddress        getServerAddress() const;
-    
-    //! Return true if received file size is valid
-    bool                isReceivedFileSizeValid();
-
-    //! Return expected file size
-    size_t&                getExpectedFileSize() { return m_expectedFileSize; }
-
-    //! Return received file data
-    String&                getReceivedFileData() { return m_receivedFileData; }
-
-    //! Return drag file list
-    DragFileList        getDragFileList() { return m_dragFileList; }
-
-    //@}
-
-    // IScreen overrides
-    virtual void*        getEventTarget() const;
-    virtual bool        getClipboard(ClipboardID id, IClipboard*) const;
-    virtual void        getShape(SInt32& x, SInt32& y,
-                            SInt32& width, SInt32& height) const;
-    virtual void        getCursorPos(SInt32& x, SInt32& y) const;
-
-    // IClient overrides
-    virtual void        enter(SInt32 xAbs, SInt32 yAbs,
-                            UInt32 seqNum, KeyModifierMask mask,
-                            bool forScreensaver);
-    virtual bool        leave();
-    virtual void        setClipboard(ClipboardID, const IClipboard*);
-    virtual void        grabClipboard(ClipboardID);
-    virtual void        setClipboardDirty(ClipboardID, bool);
-    virtual void        keyDown(KeyID, KeyModifierMask, KeyButton);
-    virtual void        keyRepeat(KeyID, KeyModifierMask,
-                            SInt32 count, KeyButton);
-    virtual void        keyUp(KeyID, KeyModifierMask, KeyButton);
-    virtual void        mouseDown(ButtonID);
-    virtual void        mouseUp(ButtonID);
-    virtual void        mouseMove(SInt32 xAbs, SInt32 yAbs);
-    virtual void        mouseRelativeMove(SInt32 xRel, SInt32 yRel);
-    virtual void        mouseWheel(SInt32 xDelta, SInt32 yDelta);
-    virtual void        screensaver(bool activate);
-    virtual void        resetOptions();
-    virtual void        setOptions(const OptionsList& options);
-    virtual String        getName() const;
-
-private:
-    void                sendClipboard(ClipboardID);
-    void                sendEvent(Event::Type, void*);
-    void                sendConnectionFailedEvent(const char* msg);
-    void                sendFileChunk(const void* data);
-    void                sendFileThread(void*);
-    void                writeToDropDirThread(void*);
-    void                setupConnecting();
-    void                setupConnection();
-    void                setupScreen();
-    void                setupTimer();
-    void                cleanupConnecting();
-    void                cleanupConnection();
-    void                cleanupScreen();
-    void                cleanupTimer();
-    void                cleanupStream();
-    void                handleConnected(const Event&, void*);
-    void                handleConnectionFailed(const Event&, void*);
-    void                handleConnectTimeout(const Event&, void*);
-    void                handleOutputError(const Event&, void*);
-    void                handleDisconnected(const Event&, void*);
-    void                handleShapeChanged(const Event&, void*);
-    void                handleClipboardGrabbed(const Event&, void*);
-    void                handleHello(const Event&, void*);
-    void                handleSuspend(const Event& event, void*);
-    void                handleResume(const Event& event, void*);
-    void                handleFileChunkSending(const Event&, void*);
-    void                handleFileRecieveCompleted(const Event&, void*);
-    void                handleStopRetry(const Event&, void*);
-    void                onFileRecieveCompleted();
-    void                sendClipboardThread(void*);
+  class FailInfo
+  {
+  public:
+    explicit FailInfo(const char *what) : m_what(what)
+    {
+      // do nothing
+    }
+    bool m_retry = false;
+    QString m_what;
+  };
 
 public:
-    bool                m_mock;
+  /*!
+  This client will attempt to connect to the server using \p name
+  as its name and \p address as the server's address and \p factory
+  to create the socket.  \p computer is    the local computer.
+  */
+  Client(
+      IEventQueue *events, const std::string &name, const NetworkAddress &address, ISocketFactory *socketFactory,
+      deskflow::Computer *computer
+  );
+  Client(Client const &) = delete;
+  Client(Client &&) = delete;
+  ~Client() override;
+
+  Client &operator=(Client const &) = delete;
+  Client &operator=(Client &&) = delete;
+
+  //! @name manipulators
+  //@{
+
+  //! Connect to server
+  /*!
+  Starts an attempt to connect to the server.  This is ignored if
+  the client is trying to connect or is already connected.
+  */
+  void connect(size_t addressIndex = 0);
+  void setServerAddress(const NetworkAddress &address);
+
+  //! Disconnect
+  /*!
+  Disconnects from the server with an optional error message.
+  */
+  void disconnect(const char *msg);
+
+  //! Refuse connection
+  /*!
+  Disconnects from the server with an optional error message.
+  Unlike disconnect this function doesn't try to use other ip addresses
+  */
+  void refuseConnection(deskflow::core::ConnectionRefusal reason, const char *msg);
+
+  //! Notify of handshake complete
+  /*!
+  Notifies the client that the connection handshake has completed.
+  */
+  virtual void handshakeComplete();
+
+  //@}
+  //! @name accessors
+  //@{
+
+  //! Test if connected
+  /*!
+  Returns true if the client is successfully connected to the server.
+  */
+  bool isConnected() const;
+
+  //! Test if connecting
+  /*!
+  Returns true if the client is currently attempting to connect to
+  the server.
+  */
+  bool isConnecting() const;
+
+  //! Get address of server
+  /*!
+  Returns the address of the server the client is connected (or wants
+  to connect) to.
+  */
+  NetworkAddress getServerAddress() const;
+
+  //! Return last resolved adresses count
+  size_t getLastResolvedAddressesCount() const
+  {
+    return m_resolvedAddressesCount;
+  }
+  size_t getMaximumClipboardReceiveSizeBytes() const;
+
+  //@}
+
+  // IComputer overrides
+  void *getEventTarget() const final;
+  bool getClipboard(ClipboardID id, IClipboard *) const override;
+  void getShape(int32_t &x, int32_t &y, int32_t &width, int32_t &height) const override;
+  void getCursorPos(int32_t &x, int32_t &y) const override;
+
+  // IClient overrides
+  void enter(int32_t xAbs, int32_t yAbs, uint32_t seqNum, KeyModifierMask mask, bool forScreensaver) override;
+  bool leave() override;
+  void setClipboard(ClipboardID, const IClipboard *) override;
+  void grabClipboard(ClipboardID) override;
+  void setClipboardDirty(ClipboardID, bool) override;
+  void keyDown(KeyID, KeyModifierMask, KeyButton, const std::string &) override;
+  void keyRepeat(KeyID, KeyModifierMask, int32_t count, KeyButton, const std::string &lang) override;
+  void keyUp(KeyID, KeyModifierMask, KeyButton) override;
+  void mouseDown(ButtonID) override;
+  void mouseUp(ButtonID) override;
+  void mouseMove(int32_t xAbs, int32_t yAbs) override;
+  void mouseRelativeMove(int32_t xRel, int32_t yRel) override;
+  void mouseWheel(int32_t xDelta, int32_t yDelta) override;
+  void screensaver(bool activate) override;
+  void resetOptions() override;
+  void setOptions(const OptionsList &options) override;
+  std::string getName() const override;
 
 private:
-    String              m_name;
-    NetworkAddress      m_serverAddress;
-    ISocketFactory*     m_socketFactory;
-    synergy::Screen*    m_screen;
-    synergy::IStream*   m_stream;
-    EventQueueTimer*    m_timer;
-    ServerProxy*        m_server;
-    bool                m_ready;
-    bool                m_active;
-    bool                m_suspended;
-    bool                m_connectOnResume;
-    bool                m_ownClipboard[kClipboardEnd];
-    bool                m_sentClipboard[kClipboardEnd];
-    IClipboard::Time    m_timeClipboard[kClipboardEnd];
-    String              m_dataClipboard[kClipboardEnd];
-    IEventQueue*        m_events;
-    std::size_t         m_expectedFileSize;
-    String              m_receivedFileData;
-    DragFileList        m_dragFileList;
-    String              m_dragFileExt;
-    Thread*             m_sendFileThread;
-    Thread*             m_writeToDropDirThread;
-    TCPSocket*          m_socket;
-    bool                m_useSecureNetwork;
-    bool                m_enableClipboard;
-    size_t              m_maximumClipboardSize;
-    lib::synergy::ClientArgs          m_args;
+  void saveRelativeRestorePosition();
+  void sendClipboard(ClipboardID);
+  void sendEvent(deskflow::EventTypes);
+  void sendConnectionFailedEvent(const char *msg);
+  void setupConnecting();
+  void setupConnection();
+  bool setupComputer(int16_t protocolMinor);
+  void setupTimer();
+  void cleanup();
+  void cleanupConnecting();
+  void cleanupConnection();
+  void cleanupComputer();
+  void cleanupTimer();
+  void cleanupStream();
+  void handleConnected();
+  void handleConnectionFailed(const Event &event);
+  void handleConnectTimeout();
+  void handleOutputError();
+  void handleDisconnected();
+  void handleDisconnectRequested(const Event &event);
+  void handleShapeChanged();
+  void handleClipboardGrabbed(const Event &event);
+  void handleHello();
+  void handleSuspend();
+  void handleResume();
+  void sendClipboardThread(void *);
+  void bindNetworkInterface(IDataSocket *socket) const;
+
+private:
+  std::string m_name;
+  NetworkAddress m_serverAddress;
+  ISocketFactory *m_socketFactory = nullptr;
+  deskflow::Computer *m_computer = nullptr;
+  deskflow::IStream *m_stream = nullptr;
+  EventQueueTimer *m_timer = nullptr;
+  ServerProxy *m_server = nullptr;
+  bool m_ready = false;
+  bool m_active = false;
+  bool m_suspended = false;
+  bool m_connectOnResume = false;
+  bool m_ownClipboard[kClipboardEnd];
+  bool m_sentClipboard[kClipboardEnd];
+  IClipboard::Time m_timeClipboard[kClipboardEnd];
+  std::string m_dataClipboard[kClipboardEnd];
+  IEventQueue *m_events = nullptr;
+  bool m_useSecureNetwork = false;
+  bool m_enableClipboard = true;
+  bool m_relativeMouseMoves = false;
+  bool m_hasRelativeRestorePosition = false;
+  int32_t m_relativeRestoreX = 0;
+  int32_t m_relativeRestoreY = 0;
+  size_t m_maximumClipboardSize = INT_MAX;
+  size_t m_resolvedAddressesCount = 0;
 };

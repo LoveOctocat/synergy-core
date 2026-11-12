@@ -1,138 +1,137 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2002 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2025 Deskflow Developers
+ * SPDX-FileCopyrightText: (C) 2012 - 2016, 2026 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2002 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #pragma once
 
-#include "synergy/clipboard_types.h"
-#include "synergy/key_types.h"
-#include "base/Event.h"
-#include "base/Stopwatch.h"
-#include "base/String.h"
+#include "common/Enums.h"
+#include "deskflow/ClipboardChunk.h"
+#include "deskflow/ClipboardTypes.h"
+#include "deskflow/KeyTypes.h"
 
 class Client;
 class ClientInfo;
 class EventQueueTimer;
 class IClipboard;
-namespace synergy { class IStream; }
+namespace deskflow {
+class IStream;
+}
 class IEventQueue;
 
-//! Proxy for server
+//! Proxy for server implementing protocol version 1.6
 /*!
 This class acts a proxy for the server, converting calls into messages
 to the server and messages from the server to calls on the client.
+It implements 1.6, the oldest version the client supports; later
+versions subclass it and add their messages.
 */
-class ServerProxy {
+class ServerProxy
+{
 public:
-    /*!
-    Process messages from the server on \p stream and forward to
-    \p client.
-    */
-    ServerProxy(Client* client, synergy::IStream* stream, IEventQueue* events);
-    ServerProxy(ServerProxy const &) =delete;
-    ServerProxy(ServerProxy &&) =delete;
-    ~ServerProxy();
+  /*!
+  Process messages from the server on \p stream and forward to
+  \p client.
+  */
+  ServerProxy(Client *client, deskflow::IStream *stream, IEventQueue *events);
+  ServerProxy(ServerProxy const &) = delete;
+  ServerProxy(ServerProxy &&) = delete;
+  virtual ~ServerProxy();
 
-    ServerProxy& operator=(ServerProxy const &) =delete;
-    ServerProxy& operator=(ServerProxy &&) =delete;
+  ServerProxy &operator=(ServerProxy const &) = delete;
+  ServerProxy &operator=(ServerProxy &&) = delete;
 
-    //! @name manipulators
-    //@{
+  //! @name manipulators
+  //@{
 
-    void                onInfoChanged();
-    bool                onGrabClipboard(ClipboardID);
-    void                onClipboardChanged(ClipboardID, const IClipboard*);
+  void onInfoChanged();
+  bool onGrabClipboard(ClipboardID);
+  void onClipboardChanged(ClipboardID, const IClipboard *);
 
-    //@}
-
-    // sending file chunk to server
-    void                fileChunkSending(UInt8 mark, char* data, size_t dataSize);
-
-    // sending dragging information to server
-    void                sendDragInfo(UInt32 fileCount, const char* info, size_t size);
-    
-#ifdef TEST_ENV
-    void                handleDataForTest() { handleData(Event(), NULL); }
-#endif
+  //@}
 
 protected:
-    enum EResult { kOkay, kUnknown, kDisconnect };
-    EResult                parseHandshakeMessage(const UInt8* code);
-    EResult                parseMessage(const UInt8* code);
+  enum class ConnectionResult
+  {
+    Okay,
+    Unknown,
+    Disconnect
+  };
+
+  virtual ConnectionResult parseHandshakeMessage(const uint8_t *code);
+  virtual ConnectionResult parseMessage(const uint8_t *code);
+  void keyDown(uint16_t id, uint16_t mask, uint16_t button, const std::string &lang);
+  void keyRepeat(uint16_t id, uint16_t mask, uint16_t count, uint16_t button, const std::string &lang);
+
+  deskflow::IStream *getStream() const
+  {
+    return m_stream;
+  }
 
 private:
-    // if compressing mouse motion then send the last motion now
-    void                flushCompressedMouse();
+  // if compressing mouse motion then send the last motion now
+  void flushCompressedMouse();
 
-    void                sendInfo(const ClientInfo&);
+  void sendInfo(const ClientInfo &);
 
-    void                resetKeepAliveAlarm();
-    void                setKeepAliveRate(double);
+  void resetKeepAliveAlarm();
+  void setKeepAliveRate(double);
 
-    // modifier key translation
-    KeyID                translateKey(KeyID) const;
-    KeyModifierMask            translateModifierMask(KeyModifierMask) const;
+  // modifier key translation
+  KeyID translateKey(KeyID) const;
+  KeyModifierMask translateModifierMask(KeyModifierMask) const;
 
-    // event handlers
-    void                handleData(const Event&, void*);
-    void                handleKeepAliveAlarm(const Event&, void*);
+  // event handlers
+  void handleData();
+  ConnectionResult handleMessage(const uint8_t *code);
+  void handleKeepAliveAlarm();
+  void requestDisconnect(const char *message);
+  void requestRefuseConnection(deskflow::core::ConnectionRefusal reason, const char *message);
 
-    // message handlers
-    void                enter();
-    void                leave();
-    void                setClipboard();
-    void                grabClipboard();
-    void                keyDown();
-    void                keyRepeat();
-    void                keyUp();
-    void                mouseDown();
-    void                mouseUp();
-    void                mouseMove();
-    void                mouseRelativeMove();
-    void                mouseWheel();
-    void                screensaver();
-    void                resetOptions();
-    void                setOptions();
-    void                queryInfo();
-    void                infoAcknowledgment();
-    void                fileChunkReceived();
-    void                dragInfoReceived();
-    void                handleClipboardSendingEvent(const Event&, void*);
+  // message handlers
+  void enter();
+  void leave();
+  void setClipboard();
+  void grabClipboard();
+  void keyUp();
+  void mouseDown();
+  void mouseUp();
+  void mouseMove();
+  void mouseRelativeMove();
+  void mouseWheel();
+  void screensaver();
+  void resetOptions();
+  void setOptions();
+  void queryInfo();
+  void infoAcknowledgment();
 
 private:
-    typedef EResult (ServerProxy::*MessageParser)(const UInt8*);
+  using MessageParser = ConnectionResult (ServerProxy::*)(const uint8_t *);
 
-    Client*            m_client;
-    synergy::IStream*    m_stream;
+  Client *m_client = nullptr;
+  deskflow::IStream *m_stream = nullptr;
 
-    UInt32                m_seqNum;
+  uint32_t m_seqNum = 0;
 
-    bool                m_compressMouse;
-    bool                m_compressMouseRelative;
-    SInt32                m_xMouse, m_yMouse;
-    SInt32                m_dxMouse, m_dyMouse;
+  bool m_compressMouse = false;
+  bool m_compressMouseRelative = false;
+  int32_t m_xMouse = 0;
+  int32_t m_yMouse = 0;
+  int32_t m_dxMouse = 0;
+  int32_t m_dyMouse = 0;
 
-    bool                m_ignoreMouse;
+  bool m_ignoreMouse = false;
 
-    KeyModifierID        m_modifierTranslationTable[kKeyModifierIDLast];
+  KeyModifierID m_modifierTranslationTable[kKeyModifierIDLast];
 
-    double                m_keepAliveAlarm;
-    EventQueueTimer*    m_keepAliveAlarmTimer;
+  double m_keepAliveAlarm = 0.0;
+  EventQueueTimer *m_keepAliveAlarmTimer = nullptr;
 
-    MessageParser        m_parser;
-    IEventQueue*        m_events;
+  MessageParser m_parser = &ServerProxy::parseHandshakeMessage;
+  IEventQueue *m_events = nullptr;
+  std::string m_clipboardDataCached;
+  ClipboardChunkAssemblyState m_clipboardChunkState;
 };

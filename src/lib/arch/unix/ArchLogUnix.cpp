@@ -1,84 +1,52 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2002 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2026 Deskflow Developers
+ * SPDX-FileCopyrightText: (C) 2012 - 2016 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2002 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #include "arch/unix/ArchLogUnix.h"
 
+#include <QString>
 #include <syslog.h>
-
 //
 // ArchLogUnix
 //
 
-ArchLogUnix::ArchLogUnix()
+void ArchLogUnix::openLog(const QString &name)
 {
-    // do nothing
+  openlog(qPrintable(name), 0, LOG_DAEMON);
 }
 
-ArchLogUnix::~ArchLogUnix()
+void ArchLogUnix::closeLog()
 {
-    // do nothing
+  closelog();
 }
 
-void
-ArchLogUnix::openLog(const char* name)
+void ArchLogUnix::writeLog(LogLevel::Level level, const QString &msg)
 {
-    openlog(name, 0, LOG_DAEMON);
-}
+  // convert level
+  int priority;
+  switch (level) {
+    using enum LogLevel::Level;
+  case Error:
+    priority = LOG_ERR;
+    break;
 
-void
-ArchLogUnix::closeLog()
-{
-    closelog();
-}
+  case Warning:
+    priority = LOG_WARNING;
+    break;
 
-void
-ArchLogUnix::showLog(bool)
-{
-    // do nothing
-}
+  case Info:
+    priority = LOG_INFO;
+    break;
 
-void
-ArchLogUnix::writeLog(ELevel level, const char* msg)
-{
-    // convert level
-    int priority;
-    switch (level) {
-    case kERROR:
-        priority = LOG_ERR;
-        break;
+  default:
+    priority = LOG_DEBUG;
+    break;
+  }
 
-    case kWARNING:
-        priority = LOG_WARNING;
-        break;
-
-    case kNOTE:
-        priority = LOG_NOTICE;
-        break;
-
-    case kINFO:
-        priority = LOG_INFO;
-        break;
-
-    default:
-        priority = LOG_DEBUG;
-        break;
-    }
-
-    // log it
-    syslog(priority, "%s", msg);
+  // log it
+  syslog(priority, "%s", qPrintable(msg));
 }

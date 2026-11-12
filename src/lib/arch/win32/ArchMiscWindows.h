@@ -1,202 +1,149 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2002 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2026 Deskflow Developers
+ * SPDX-FileCopyrightText: (C) 2012 - 2016 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2002 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #pragma once
 
-#include "common/common.h"
-#include "common/stdstring.h"
-#include "common/stdset.h"
-#include "base/String.h"
+#include <string>
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+
 #include <Tlhelp32.h>
 
+#include <functional>
+
 //! Miscellaneous win32 functions.
-class ArchMiscWindows {
+class ArchMiscWindows
+{
 public:
-    enum EValueType {
-        kUNKNOWN,
-        kNO_VALUE,
-        kUINT,
-        kSTRING,
-        kBINARY
-    };
-    enum EBusyModes {
-        kIDLE   = 0x0000,
-        kSYSTEM  = 0x0001,
-        kDISPLAY = 0x0002
-    };
+  enum EValueType
+  {
+    kUNKNOWN,
+    kNO_VALUE,
+    kUINT,
+    kSTRING,
+    kBINARY
+  };
+  enum EBusyModes
+  {
+    kIDLE = 0x0000,
+    kSYSTEM = 0x0001,
+    kDISPLAY = 0x0002
+  };
 
-    typedef int            (*RunFunc)(void);
+  using RunFunc = std::function<int(void)>;
 
-    //! Initialize
-    static void            init();
+  //! Initialize
+  static void init();
 
-    //! Delete memory
-    static void            cleanup();
+  //! Open and return a registry key, closing the parent key
+  static HKEY openKey(HKEY parent, const TCHAR *child);
 
-    //! Set the application icons
-    /*!
-    Set the application icons.
-    */
-    static void            setIcons(HICON largeIcon, HICON smallIcon);
+  //! Open and return a registry key, closing the parent key
+  static HKEY openKey(HKEY parent, const TCHAR *const *keyPath);
 
-    //! Get the application icons
-    /*!
-    Get the application icons.
-    */
-    static void            getIcons(HICON& largeIcon, HICON& smallIcon);
+  //! Open/create and return a registry key, closing the parent key
+  static HKEY addKey(HKEY parent, const TCHAR *child);
 
-    //! Run the daemon
-    /*!
-    Delegates to ArchDaemonWindows.
-    */
-    static int            runDaemon(RunFunc runFunc);
+  //! Open/create and return a registry key, closing the parent key
+  static HKEY addKey(HKEY parent, const TCHAR *const *keyPath);
 
-    //! Indicate daemon is in main loop
-    /*!
-    Delegates to ArchDaemonWindows.
-    */
-    static void            daemonRunning(bool running);
+  //! Close a key
+  static void closeKey(HKEY);
 
-    //! Indicate failure of running daemon
-    /*!
-    Delegates to ArchDaemonWindows.
-    */
-    static void            daemonFailed(int result);
+  //! Delete a key (which should have no subkeys)
+  static void deleteKey(HKEY parent, const TCHAR *name);
 
-    //! Get daemon quit message
-    /*!
-    Delegates to ArchDaemonWindows.
-    */
-    static UINT            getDaemonQuitMessage();
+  //! Get type of value
+  static EValueType typeOfValue(HKEY key, const TCHAR *name);
 
-    //! Open and return a registry key, closing the parent key
-    static HKEY            openKey(HKEY parent, const TCHAR* child);
+  //! Set a string value in the registry
+  static void setValue(HKEY key, const TCHAR *name, const std::string &value);
 
-    //! Open and return a registry key, closing the parent key
-    static HKEY            openKey(HKEY parent, const TCHAR* const* keyPath);
+  //! Set a DWORD value in the registry
+  static void setValue(HKEY key, const TCHAR *name, DWORD value);
 
-    //! Open/create and return a registry key, closing the parent key
-    static HKEY            addKey(HKEY parent, const TCHAR* child);
+  //! Read a string value from the registry
+  static std::wstring readValueString(HKEY, const TCHAR *name);
 
-    //! Open/create and return a registry key, closing the parent key
-    static HKEY            addKey(HKEY parent, const TCHAR* const* keyPath);
+  //! Read a DWORD value from the registry
+  static DWORD readValueInt(HKEY, const TCHAR *name);
 
-    //! Close a key
-    static void            closeKey(HKEY);
+  //! Disable power saving
+  static void addBusyState(DWORD busyModes);
 
-    //! Delete a key (which should have no subkeys)
-    static void            deleteKey(HKEY parent, const TCHAR* name);
+  //! Enable power saving
+  static void removeBusyState(DWORD busyModes);
 
-    //! Delete a value
-    static void            deleteValue(HKEY parent, const TCHAR* name);
+  //! Briefly interrupt power saving
+  static void wakeupDisplay();
 
-    //! Test if a value exists
-    static bool            hasValue(HKEY key, const TCHAR* name);
+  //! Returns true if this process was launched via NT service host.
+  static bool wasLaunchedAsService();
 
-    //! Get type of value
-    static EValueType    typeOfValue(HKEY key, const TCHAR* name);
+  //! Returns true if we got the parent process name.
+  static bool getParentProcessName(std::wstring &name);
 
-    //! Set a string value in the registry
-    static void            setValue(HKEY key, const TCHAR* name,
-                            const std::string& value);
+  //! Prevent hard to troubleshoot errors, e.g. access violations.
+  static void guardRuntimeVersion();
 
-    //! Set a DWORD value in the registry
-    static void            setValue(HKEY key, const TCHAR* name, DWORD value);
+  //! Gets the window instance saved at program start.
+  /*!
+  e.g. Used by `GetModuleFileName` which is used when installing the daemon.
+  */
+  static HINSTANCE instanceWin32();
 
-    //! Set a BINARY value in the registry
-    /*!
-    Sets the \p name value of \p key to \p value.data().
-    */
-    static void            setValueBinary(HKEY key, const TCHAR* name,
-                            const std::string& value);
+  //! Saves the window instance for later use.
+  static void setInstanceWin32(HINSTANCE instance);
 
-    //! Read a string value from the registry
-    static std::string    readValueString(HKEY, const TCHAR* name);
+  //! Get the name of the active input desktop.
+  static std::wstring getActiveDesktopName();
 
-    //! Read a DWORD value from the registry
-    static DWORD        readValueInt(HKEY, const TCHAR* name);
-
-    //! Read a BINARY value from the registry
-    static std::string    readValueBinary(HKEY, const TCHAR* name);
-
-    //! Add a dialog
-    static void            addDialog(HWND);
-
-    //! Remove a dialog
-    static void            removeDialog(HWND);
-
-    //! Process dialog message
-    /*!
-    Checks if the message is destined for a dialog.  If so the message
-    is passed to the dialog and returns true, otherwise returns false.
-    */
-    static bool            processDialog(MSG*);
-
-    //! Disable power saving
-    static void            addBusyState(DWORD busyModes);
-
-    //! Enable power saving
-    static void            removeBusyState(DWORD busyModes);
-
-    //! Briefly interrupt power saving
-    static void            wakeupDisplay();
-
-    //! Returns true if this process was launched via NT service host.
-    static bool wasLaunchedAsService();
-
-    //! Returns true if we got the parent process name.
-    static bool getParentProcessName(String &name);
-
-    static HINSTANCE instanceWin32();
-
-    static void setInstanceWin32(HINSTANCE instance);
-    
-    static BOOL WINAPI getProcessEntry(PROCESSENTRY32& entry, DWORD processID);
-    static BOOL WINAPI getSelfProcessEntry(PROCESSENTRY32& entry);
-    static BOOL WINAPI getParentProcessEntry(PROCESSENTRY32& entry);
+  //! Returns true if the process is running with elevated privileges (i.e. as admin).
+  static bool isProcessElevated();
 
 private:
-    //! Open and return a registry key, closing the parent key
-    static HKEY            openKey(HKEY parent, const TCHAR* child, bool create);
+  //! Open and return a registry key, closing the parent key
+  static HKEY openKey(HKEY parent, const TCHAR *child, bool create);
 
-    //! Open and return a registry key, closing the parent key
-    static HKEY            openKey(HKEY parent, const TCHAR* const* keyPath,
-                            bool create);
+  //! Open and return a registry key, closing the parent key
+  static HKEY openKey(HKEY parent, const TCHAR *const *keyPath, bool create);
 
-    //! Read a string value from the registry
-    static std::string    readBinaryOrString(HKEY, const TCHAR* name, DWORD type);
+  //! Read a string value from the registry
+  static std::wstring readBinaryOrString(HKEY, const TCHAR *name, DWORD type);
 
-    //! Set thread busy state
-    static void            setThreadExecutionState(DWORD);
+  //! Set thread busy state
+  static void setThreadExecutionState(DWORD);
 
-    static DWORD WINAPI    dummySetThreadExecutionState(DWORD);
+  //! Dummy function for thread execution state
+  static DWORD WINAPI dummySetThreadExecutionState(DWORD);
+
+  //! Iterates over the process snapshot to find a process entry
+  static BOOL WINAPI getProcessEntry(PROCESSENTRY32 &entry, DWORD processID);
+
+  //! Calls `getProcessEntry` with the current process ID
+  static BOOL WINAPI getSelfProcessEntry(PROCESSENTRY32 &entry);
+
+  //! Calls `getProcessEntry` with the parent process ID
+  static BOOL WINAPI getParentProcessEntry(PROCESSENTRY32 &entry);
+
+  //! Searches the loaded modules and returns the matching module handle
+  /**
+   * @param moduleNames Provide two module names to search for both release and debug versions.
+   */
+  static HMODULE findLoadedModule(std::array<const char *, 2> moduleNames);
 
 private:
-    typedef std::set<HWND> Dialogs;
-    typedef DWORD (WINAPI *STES_t)(DWORD);
+  typedef DWORD(WINAPI *STES_t)(DWORD);
 
-    static Dialogs*    s_dialogs;
-    static DWORD        s_busyState;
-    static STES_t        s_stes;
-    static HICON        s_largeIcon;
-    static HICON        s_smallIcon;
-    static HINSTANCE    s_instanceWin32;
+  static DWORD s_busyState;
+  static STES_t s_stes; // STES: Set thread execution state
+  static HICON s_largeIcon;
+  static HICON s_smallIcon;
+  static HINSTANCE s_instanceWin32;
 };

@@ -1,42 +1,27 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2002 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2012 - 2016 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2002 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #include "arch/unix/ArchNetworkBSD.h"
 
 #include "arch/Arch.h"
+#include "arch/ArchException.h"
 #include "arch/unix/ArchMultithreadPosix.h"
 #include "arch/unix/XArchUnix.h"
 
-#if HAVE_UNISTD_H
-#    include <unistd.h>
-#endif
-#include <netdb.h>
-#include <netinet/in.h>
-#if !defined(TCP_NODELAY)
-#    include <netinet/tcp.h>
-#endif
 #include <arpa/inet.h>
+#include <cstring>
 #include <errno.h>
 #include <fcntl.h>
-#include <cstring>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <unistd.h>
 
-#if !HAVE_INET_ATON
-#    include <stdio.h>
+#if !defined(TCP_NODELAY)
+#include <netinet/tcp.h>
 #endif
 
 static const int s_family[] = {
@@ -44,952 +29,797 @@ static const int s_family[] = {
     PF_INET,
     PF_INET6,
 };
-static const int s_type[] = {
-    SOCK_DGRAM,
-    SOCK_STREAM
-};
 
-#if !HAVE_INET_ATON
-// parse dotted quad addresses.  we don't bother with the weird BSD'ism
-// of handling octal and hex and partial forms.
-static
-in_addr_t
-inet_aton(const char* cp, struct in_addr* inp)
+static const int s_type[] = {SOCK_DGRAM, SOCK_STREAM};
+
+//
+// ArchNetworkBSD::Deps
+//
+
+void ArchNetworkBSD::Deps::sleep(double seconds)
 {
-    unsigned int a, b, c, d;
-    if (sscanf(cp, "%u.%u.%u.%u", &a, &b, &c, &d) != 4) {
-        return 0;
-    }
-    if (a >= 256 || b >= 256 || c >= 256 || d >= 256) {
-        return 0;
-    }
-    unsigned char* incp = (unsigned char*)inp;
-    incp[0] = (unsigned char)(a & 0xffu);
-    incp[1] = (unsigned char)(b & 0xffu);
-    incp[2] = (unsigned char)(c & 0xffu);
-    incp[3] = (unsigned char)(d & 0xffu);
-    return inp->s_addr;
+  Arch::sleep(seconds);
 }
-#endif
+
+int ArchNetworkBSD::Deps::poll(struct pollfd *fds, nfds_t nfds, int timeout)
+{
+  return ::poll(fds, nfds, timeout);
+}
+
+std::shared_ptr<struct pollfd[]> ArchNetworkBSD::Deps::makePollFD(nfds_t n)
+{
+  return std::make_shared<struct pollfd[]>(n);
+}
+
+ssize_t ArchNetworkBSD::Deps::read(int fd, void *buf, size_t len)
+{
+  return ::read(fd, buf, len);
+}
+
+void ArchNetworkBSD::Deps::testCancelThread()
+{
+  ARCH->testCancelThread();
+}
 
 //
 // ArchNetworkBSD
 //
 
-ArchNetworkBSD::Connectors ArchNetworkBSD::s_connectors;
-
-ArchNetworkBSD::ArchNetworkBSD()
-= default;
-
-ArchNetworkBSD::~ArchNetworkBSD()
+void ArchNetworkBSD::init()
 {
-    if (m_mutex) ARCH->closeMutex(m_mutex);
+  // do nothing
 }
 
-void
-ArchNetworkBSD::init()
+ArchSocket ArchNetworkBSD::newSocket(AddressFamily family, SocketType type)
 {
-    // create mutex to make some calls thread safe
-    m_mutex = ARCH->newMutex();
-}
-
-ArchSocket
-ArchNetworkBSD::newSocket(EAddressFamily family, ESocketType type)
-{
-    // create socket
-    int fd = socket(s_family[family], s_type[type], 0);
-    if (fd == -1) {
-        throwError(errno);
-    }
-    try {
-        setBlockingOnSocket(fd, false);
-    }
-    catch (...) {
-        close(fd);
-        throw;
-    }
-
-    // allocate socket object
-    auto* newSocket = new ArchSocketImpl;
-    newSocket->m_fd            = fd;
-    newSocket->m_refCount      = 1;
-    return newSocket;
-}
-
-ArchSocket
-ArchNetworkBSD::copySocket(ArchSocket s)
-{
-    assert(s != NULL);
-
-    // ref the socket and return it
-    ARCH->lockMutex(m_mutex);
-    ++s->m_refCount;
-    ARCH->unlockMutex(m_mutex);
-    return s;
-}
-
-void
-ArchNetworkBSD::closeSocket(ArchSocket s)
-{
-    assert(s != NULL);
-
-    // unref the socket and note if it should be released
-    ARCH->lockMutex(m_mutex);
-    const bool doClose = (--s->m_refCount == 0);
-    ARCH->unlockMutex(m_mutex);
-
-    // close the socket if necessary
-    if (doClose) {
-        if (close(s->m_fd) == -1) {
-            // close failed.  restore the last ref and throw.
-            int err = errno;
-            ARCH->lockMutex(m_mutex);
-            ++s->m_refCount;
-            ARCH->unlockMutex(m_mutex);
-            throwError(err);
-        }
-        delete s;
-    }
-}
-
-void
-ArchNetworkBSD::closeSocketForRead(ArchSocket s)
-{
-    assert(s != NULL);
-
-    if (shutdown(s->m_fd, 0) == -1) {
-        if (errno != ENOTCONN) {
-            throwError(errno);
-        }
-    }
-}
-
-void
-ArchNetworkBSD::closeSocketForWrite(ArchSocket s)
-{
-    assert(s != NULL);
-
-    if (shutdown(s->m_fd, 1) == -1) {
-        if (errno != ENOTCONN) {
-            throwError(errno);
-        }
-    }
-}
-
-void
-ArchNetworkBSD::bindSocket(ArchSocket s, ArchNetAddress addr)
-{
-    assert(s    != NULL);
-    assert(addr != NULL);
-
-    if (bind(s->m_fd, TYPED_ADDR(struct sockaddr, addr), addr->m_len) == -1) {
-        throwError(errno);
-    }
-}
-
-void
-ArchNetworkBSD::listenOnSocket(ArchSocket s)
-{
-    assert(s != NULL);
-
-    // hardcoding backlog
-    if (listen(s->m_fd, 3) == -1) {
-        throwError(errno);
-    }
-}
-
-ArchSocket
-ArchNetworkBSD::acceptSocket(ArchSocket s, ArchNetAddress* addr)
-{
-    assert(s != NULL);
-
-    // if user passed NULL in addr then use scratch space
-    ArchNetAddress dummy;
-    if (addr == nullptr) {
-        addr = &dummy;
-    }
-
-    // create new socket and address
-    auto* newSocket = new ArchSocketImpl;
-    *addr                      = new ArchNetAddressImpl;
-
-    // accept on socket
-    auto len = ((*addr)->m_len);
-    int fd = accept(s->m_fd, TYPED_ADDR(struct sockaddr, (*addr)), &len);
-    (*addr)->m_len = len;
-    if (fd == -1) {
-        int err = errno;
-        delete newSocket;
-        delete *addr;
-        *addr = nullptr;
-        if (err == EAGAIN) {
-            return nullptr;
-        }
-        throwError(err);
-    }
-
-    try {
-        setBlockingOnSocket(fd, false);
-    }
-    catch (...) {
-        close(fd);
-        delete newSocket;
-        delete *addr;
-        *addr = nullptr;
-        throw;
-    }
-
-    // initialize socket
-    newSocket->m_fd       = fd;
-    newSocket->m_refCount = 1;
-
-    // discard address if not requested
-    if (addr == &dummy) {
-        ARCH->closeAddr(dummy);
-    }
-
-    return newSocket;
-}
-
-bool
-ArchNetworkBSD::connectSocket(ArchSocket s, ArchNetAddress addr)
-{
-    assert(s    != NULL);
-    assert(addr != NULL);
-
-    if (connect(s->m_fd, TYPED_ADDR(struct sockaddr, addr), addr->m_len) == -1) {
-        if (errno == EISCONN) {
-            return true;
-        }
-        if (errno == EINPROGRESS) {
-            return false;
-        }
-        throwError(errno);
-    }
-    return true;
-}
-
-#if HAVE_POLL
-
-int
-ArchNetworkBSD::pollSocket(PollEntry pe[], int num, double timeout)
-{
-    assert(pe != NULL || num == 0);
-
-    // return if nothing to do
-    if (num == 0) {
-        if (timeout > 0.0) {
-            ARCH->sleep(timeout);
-        }
-        return 0;
-    }
-
-    // allocate space for translated query
-    auto* pfd = new struct pollfd[1 + num];
-
-    // translate query
-    for (int i = 0; i < num; ++i) {
-        pfd[i].fd     = (pe[i].m_socket == nullptr) ? -1 : pe[i].m_socket->m_fd;
-        pfd[i].events = 0;
-        if ((pe[i].m_events & kPOLLIN) != 0) {
-            pfd[i].events |= POLLIN;
-        }
-        if ((pe[i].m_events & kPOLLOUT) != 0) {
-            pfd[i].events |= POLLOUT;
-        }
-    }
-    int n = num;
-
-    // add the unblock pipe
-    const int* unblockPipe = getUnblockPipe();
-    if (unblockPipe != nullptr) {
-        pfd[n].fd     = unblockPipe[0];
-        pfd[n].events = POLLIN;
-        ++n;
-    }
-
-    // prepare timeout
-    int t = (timeout < 0.0) ? -1 : static_cast<int>(1000.0 * timeout);
-
-    // do the poll
-    n = s_connectors.poll_impl(pfd, n, t);
-
-    // reset the unblock pipe
-    if (n > 0 && unblockPipe != nullptr && (pfd[num].revents & POLLIN) != 0) {
-        // the unblock event was signalled.  flush the pipe.
-        char dummy[100];
-        int ignore;
-
-        do {
-            ignore = read(unblockPipe[0], dummy, sizeof(dummy));
-        } while (errno != EAGAIN);
-
-        // don't count this unblock pipe in return value
-        --n;
-    }
-
-    // handle results
-    if (n == -1) {
-        if (errno == EINTR) {
-            // interrupted system call
-            ARCH->testCancelThread();
-            delete[] pfd;
-            return 0;
-        }
-        delete[] pfd;
-        throwError(errno);
-        return -1;
-    }
-
-    // translate back
-    for (int i = 0; i < num; ++i) {
-        pe[i].m_revents = 0;
-        if ((pfd[i].revents & POLLIN) != 0) {
-            pe[i].m_revents |= kPOLLIN;
-        }
-        if ((pfd[i].revents & POLLOUT) != 0) {
-            pe[i].m_revents |= kPOLLOUT;
-        }
-        if ((pfd[i].revents & POLLERR) != 0) {
-            pe[i].m_revents |= kPOLLERR;
-        }
-        if ((pfd[i].revents & POLLNVAL) != 0) {
-            pe[i].m_revents |= kPOLLNVAL;
-        }
-    }
-
-    delete[] pfd;
-    return n;
-}
-
-#else
-
-int
-ArchNetworkBSD::pollSocket(PollEntry pe[], int num, double timeout)
-{
-    int i, n;
-
-    // prepare sets for select
-    n = 0;
-    fd_set readSet, writeSet, errSet;
-    fd_set* readSetP  = NULL;
-    fd_set* writeSetP = NULL;
-    fd_set* errSetP   = NULL;
-    FD_ZERO(&readSet);
-    FD_ZERO(&writeSet);
-    FD_ZERO(&errSet);
-    for (i = 0; i < num; ++i) {
-        // reset return flags
-        pe[i].m_revents = 0;
-
-        // set invalid flag if socket is bogus then go to next socket
-        if (pe[i].m_socket == NULL) {
-            pe[i].m_revents |= kPOLLNVAL;
-            continue;
-        }
-
-        int fdi = pe[i].m_socket->m_fd;
-        if (pe[i].m_events & kPOLLIN) {
-            FD_SET(pe[i].m_socket->m_fd, &readSet);
-            readSetP = &readSet;
-            if (fdi > n) {
-                n = fdi;
-            }
-        }
-        if (pe[i].m_events & kPOLLOUT) {
-            FD_SET(pe[i].m_socket->m_fd, &writeSet);
-            writeSetP = &writeSet;
-            if (fdi > n) {
-                n = fdi;
-            }
-        }
-        if (true) {
-            FD_SET(pe[i].m_socket->m_fd, &errSet);
-            errSetP = &errSet;
-            if (fdi > n) {
-                n = fdi;
-            }
-        }
-    }
-
-    // add the unblock pipe
-    const int* unblockPipe = getUnblockPipe();
-    if (unblockPipe != NULL) {
-        FD_SET(unblockPipe[0], &readSet);
-        readSetP = &readSet;
-        if (unblockPipe[0] > n) {
-            n = unblockPipe[0];
-        }
-    }
-
-    // if there are no sockets then don't block forever
-    if (n == 0 && timeout < 0.0) {
-        timeout = 0.0;
-    }
-
-    // prepare timeout for select
-    struct timeval timeout2;
-    struct timeval* timeout2P;
-    if (timeout < 0.0) {
-        timeout2P = NULL;
-    }
-    else {
-        timeout2P = &timeout2;
-        timeout2.tv_sec  = static_cast<int>(timeout);
-        timeout2.tv_usec = static_cast<int>(1.0e+6 *
-                                        (timeout - timeout2.tv_sec));
-    }
-
-    // do the select
-    n = select((SELECT_TYPE_ARG1)  n + 1,
-                SELECT_TYPE_ARG234 readSetP,
-                SELECT_TYPE_ARG234 writeSetP,
-                SELECT_TYPE_ARG234 errSetP,
-                SELECT_TYPE_ARG5   timeout2P);
-
-    // reset the unblock pipe
-    if (n > 0 && unblockPipe != NULL && FD_ISSET(unblockPipe[0], &readSet)) {
-        // the unblock event was signalled.  flush the pipe.
-        char dummy[100];
-        do {
-            read(unblockPipe[0], dummy, sizeof(dummy));
-        } while (errno != EAGAIN);
-    }
-
-    // handle results
-    if (n == -1) {
-        if (errno == EINTR) {
-            // interrupted system call
-            ARCH->testCancelThread();
-            return 0;
-        }
-        throwError(errno);
-    }
-    n = 0;
-    for (i = 0; i < num; ++i) {
-        if (pe[i].m_socket != NULL) {
-            if (FD_ISSET(pe[i].m_socket->m_fd, &readSet)) {
-                pe[i].m_revents |= kPOLLIN;
-            }
-            if (FD_ISSET(pe[i].m_socket->m_fd, &writeSet)) {
-                pe[i].m_revents |= kPOLLOUT;
-            }
-            if (FD_ISSET(pe[i].m_socket->m_fd, &errSet)) {
-                pe[i].m_revents |= kPOLLERR;
-            }
-        }
-        if (pe[i].m_revents != 0) {
-            ++n;
-        }
-    }
-
-    return n;
-}
-
+  // create socket
+  int fd = socket(s_family[static_cast<int>(family)], s_type[static_cast<int>(type)], 0);
+  if (fd == -1) {
+    throwError(errno);
+  }
+  try {
+    setBlockingOnSocket(fd, false);
+#if defined(__APPLE__)
+    int on = 1;
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
 #endif
+  } catch (...) {
+    close(fd);
+    throw;
+  }
 
-void
-ArchNetworkBSD::unblockPollSocket(ArchThread thread)
-{
-    const int* unblockPipe = getUnblockPipeForThread(thread);
-    if (unblockPipe != nullptr) {
-        char dummy = 0;
-        int ignore;
-
-        ignore = write(unblockPipe[1], &dummy, 1);
-    }
+  // allocate socket object
+  auto *newSocket = new ArchSocketImpl;
+  newSocket->m_fd = fd;
+  newSocket->m_refCount = 1;
+  return newSocket;
 }
 
-size_t
-ArchNetworkBSD::readSocket(ArchSocket s, void* buf, size_t len)
+ArchSocket ArchNetworkBSD::copySocket(ArchSocket s)
 {
-    assert(s != NULL);
+  assert(s != nullptr);
 
-    ssize_t n = read(s->m_fd, buf, len);
-    if (n == -1) {
-        if (errno == EINTR || errno == EAGAIN) {
-            return 0;
-        }
-        throwError(errno);
-    }
-    return n;
+  // ref the socket and return it
+  std::scoped_lock lock{m_mutex};
+  ++s->m_refCount;
+  return s;
 }
 
-size_t
-ArchNetworkBSD::writeSocket(ArchSocket s, const void* buf, size_t len)
+void ArchNetworkBSD::closeSocket(ArchSocket s)
 {
-    assert(s != NULL);
+  assert(s != nullptr);
 
-    ssize_t n = write(s->m_fd, buf, len);
-    if (n == -1) {
-        if (errno == EINTR || errno == EAGAIN) {
-            return 0;
-        }
-        throwError(errno);
+  bool doClose = false;
+  // unref the socket and note if it should be released
+  {
+    std::scoped_lock lock{m_mutex};
+    doClose = (--s->m_refCount == 0);
+  }
+
+  // close the socket if necessary
+  if (doClose) {
+    if (close(s->m_fd) == -1) {
+      // close failed.  restore the last ref and throw.
+      int err = errno;
+      {
+        std::scoped_lock lock{m_mutex};
+        ++s->m_refCount;
+      }
+      throwError(err);
     }
-    return n;
+    delete s;
+  }
 }
 
-void
-ArchNetworkBSD::throwErrorOnSocket(ArchSocket s)
+void ArchNetworkBSD::closeSocketForRead(ArchSocket s)
 {
-    assert(s != NULL);
+  assert(s != nullptr);
 
-    // get the error from the socket layer
-    int err        = 0;
-    auto size = static_cast<socklen_t>(sizeof(err));
-    if (getsockopt(s->m_fd, SOL_SOCKET, SO_ERROR,
-                            reinterpret_cast<optval_t*>(&err), &size) == -1) {
-        err = errno;
-    }
-
-    // throw if there's an error
-    if (err != 0) {
-        throwError(err);
-    }
+  if ((shutdown(s->m_fd, 0) == -1) && (errno != ENOTCONN)) {
+    throwError(errno);
+  }
 }
 
-void
-ArchNetworkBSD::setBlockingOnSocket(int fd, bool blocking)
+void ArchNetworkBSD::closeSocketForWrite(ArchSocket s)
 {
-    assert(fd != -1);
+  assert(s != nullptr);
 
-    int mode = fcntl(fd, F_GETFL, 0);
-    if (mode == -1) {
-        throwError(errno);
-    }
-    if (blocking) {
-        mode &= ~O_NONBLOCK;
-    }
-    else {
-        mode |= O_NONBLOCK;
-    }
-    if (fcntl(fd, F_SETFL, mode) == -1) {
-        throwError(errno);
-    }
+  if ((shutdown(s->m_fd, 1) == -1) && (errno != ENOTCONN)) {
+    throwError(errno);
+  }
 }
 
-bool
-ArchNetworkBSD::setNoDelayOnSocket(ArchSocket s, bool noDelay)
+void ArchNetworkBSD::bindSocket(ArchSocket s, ArchNetAddress addr)
 {
-    assert(s != NULL);
+  assert(s != nullptr);
+  assert(addr != nullptr);
 
-    // get old state
-    int oflag;
-    auto size = static_cast<socklen_t>(sizeof(oflag));
-    if (getsockopt(s->m_fd, IPPROTO_TCP, TCP_NODELAY,
-                            reinterpret_cast<optval_t*>(&oflag), &size) == -1) {
-        throwError(errno);
-    }
-
-    int flag = noDelay ? 1 : 0;
-    size     = static_cast<socklen_t>(sizeof(flag));
-    if (setsockopt(s->m_fd, IPPROTO_TCP, TCP_NODELAY,
-                            reinterpret_cast<optval_t*>(&flag), size) == -1) {
-        throwError(errno);
-    }
-
-    return (oflag != 0);
+  if (bind(s->m_fd, TYPED_ADDR(struct sockaddr, addr), addr->m_len) == -1) {
+    throwError(errno);
+  }
 }
 
-bool
-ArchNetworkBSD::setReuseAddrOnSocket(ArchSocket s, bool reuse)
+void ArchNetworkBSD::listenOnSocket(ArchSocket s)
 {
-    assert(s != NULL);
+  assert(s != nullptr);
 
-    // get old state
-    int oflag;
-    auto size = static_cast<socklen_t>(sizeof(oflag));
-    if (getsockopt(s->m_fd, SOL_SOCKET, SO_REUSEADDR,
-                            reinterpret_cast<optval_t*>(&oflag), &size) == -1) {
-        throwError(errno);
-    }
-
-    int flag = reuse ? 1 : 0;
-    size     = static_cast<socklen_t>(sizeof(flag));
-    if (setsockopt(s->m_fd, SOL_SOCKET, SO_REUSEADDR,
-                            reinterpret_cast<optval_t*>(&flag), size) == -1) {
-        throwError(errno);
-    }
-
-    return (oflag != 0);
+  // hardcoding backlog
+  if (listen(s->m_fd, 3) == -1) {
+    throwError(errno);
+  }
 }
 
-std::string
-ArchNetworkBSD::getHostName()
+ArchSocket ArchNetworkBSD::acceptSocket(ArchSocket s, ArchNetAddress *addr)
 {
-    char name[256];
-    if (gethostname(name, sizeof(name)) == -1) {
-        name[0] = '\0';
+  assert(s != nullptr);
+
+  // if user passed nullptr in addr then use scratch space
+  ArchNetAddress dummy;
+  if (addr == nullptr) {
+    addr = &dummy;
+  }
+
+  // create new socket and address
+  auto *newSocket = new ArchSocketImpl;
+  *addr = new ArchNetAddressImpl;
+
+  // accept on socket
+  auto len = ((*addr)->m_len);
+  int fd = accept(s->m_fd, TYPED_ADDR(struct sockaddr, (*addr)), &len);
+  (*addr)->m_len = len;
+  if (fd == -1) {
+    int err = errno;
+    delete newSocket;
+    delete *addr;
+    *addr = nullptr;
+    if (err == EAGAIN) {
+      return nullptr;
     }
-    else {
-        name[sizeof(name) - 1] = '\0';
-    }
-    return name;
+    throwError(err);
+  }
+
+  try {
+    setBlockingOnSocket(fd, false);
+#if defined(__APPLE__)
+    int on = 1;
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
+#endif
+  } catch (...) {
+    close(fd);
+    delete newSocket;
+    delete *addr;
+    *addr = nullptr;
+    throw;
+  }
+
+  // initialize socket
+  newSocket->m_fd = fd;
+  newSocket->m_refCount = 1;
+
+  // discard address if not requested
+  if (addr == &dummy) {
+    ARCH->closeAddr(dummy);
+  }
+
+  return newSocket;
 }
 
-ArchNetAddress
-ArchNetworkBSD::newAnyAddr(EAddressFamily family)
+bool ArchNetworkBSD::connectSocket(ArchSocket s, ArchNetAddress addr)
 {
-    // allocate address
-    auto* addr = new ArchNetAddressImpl;
+  assert(s != nullptr);
+  assert(addr != nullptr);
 
-    // fill it in
-    switch (family) {
-    case kINET: {
-        auto* ipAddr = TYPED_ADDR(struct sockaddr_in, addr);
-        ipAddr->sin_family         = AF_INET;
-        ipAddr->sin_port           = 0;
-        ipAddr->sin_addr.s_addr    = INADDR_ANY;
-        addr->m_len                = static_cast<socklen_t>(sizeof(struct sockaddr_in));
-        break;
+  if (connect(s->m_fd, TYPED_ADDR(struct sockaddr, addr), addr->m_len) == -1) {
+    if (errno == EISCONN) {
+      return true;
     }
-
-    case kINET6: {
-        struct sockaddr_in6* ipAddr = TYPED_ADDR(struct sockaddr_in6, addr);
-        ipAddr->sin6_family         = AF_INET6;
-        ipAddr->sin6_port           = 0;
-        memcpy(&ipAddr->sin6_addr, &in6addr_any, sizeof(in6addr_any));
-        addr->m_len                = (socklen_t)sizeof(struct sockaddr_in6);
-        break;
+    if (errno == EINPROGRESS) {
+      return false;
     }
-    default:
-        delete addr;
-        assert(0 && "invalid family");
-    }
-
-    return addr;
+    throwError(errno);
+  }
+  return true;
 }
 
-ArchNetAddress
-ArchNetworkBSD::copyAddr(ArchNetAddress addr)
+int ArchNetworkBSD::pollSocket(PollEntry pe[], int num, double timeout)
 {
-    assert(addr != NULL);
+  assert((pe != nullptr && num > 0) || num == 0);
 
-    // allocate and copy address
-    return new ArchNetAddressImpl(*addr);
+  // return if nothing to do
+  if (num == 0) {
+    if (timeout > 0.0) {
+      m_pDeps->sleep(timeout);
+    }
+    return 0;
+  }
+
+  // allocate space for translated query
+  auto pfdPtr = m_pDeps->makePollFD(1 + num);
+  auto *pfd = pfdPtr.get();
+
+  // translate query
+  for (int i = 0; i < num; ++i) {
+    pfd[i].fd = (pe[i].m_socket == nullptr) ? -1 : pe[i].m_socket->m_fd;
+    pfd[i].events = 0;
+    if ((pe[i].m_events & PollEventMask::In) != 0) {
+      pfd[i].events |= POLLIN;
+    }
+    if ((pe[i].m_events & PollEventMask::Out) != 0) {
+      pfd[i].events |= POLLOUT;
+    }
+  }
+  int n = num;
+
+  // add the unblock pipe
+  const int *unblockPipe = getUnblockPipe();
+  if (unblockPipe != nullptr) {
+    pfd[n].fd = unblockPipe[0]; // test
+    pfd[n].events = POLLIN;
+    ++n;
+  }
+
+  // prepare timeout
+  int t = (timeout < 0.0) ? -1 : static_cast<int>(1000.0 * timeout);
+
+  // do the poll
+  n = m_pDeps->poll(pfd, n, t);
+
+  // reset the unblock pipe
+  if (n > 0 && unblockPipe != nullptr && (pfd[num].revents & POLLIN) != 0) {
+    // the unblock event was signalled.  flush the pipe.
+    char dummy[100];
+    do {
+      m_pDeps->read(unblockPipe[0], dummy, sizeof(dummy));
+    } while (errno != EAGAIN);
+
+    // don't count this unblock pipe in return value
+    --n;
+  }
+
+  // handle results
+  if (n == -1) {
+    if (errno == EINTR) {
+      // interrupted system call
+      m_pDeps->testCancelThread();
+      return 0;
+    }
+    throwError(errno);
+    return -1; // unreachable
+  }
+
+  // translate back
+  for (int i = 0; i < num; ++i) {
+    pe[i].m_revents = 0;
+    if ((pfd[i].revents & POLLIN) != 0) {
+      pe[i].m_revents |= PollEventMask::In;
+    }
+    if ((pfd[i].revents & POLLOUT) != 0) {
+      pe[i].m_revents |= PollEventMask::Out;
+    }
+    if ((pfd[i].revents & POLLERR) != 0) {
+      pe[i].m_revents |= PollEventMask::Error;
+    }
+    if ((pfd[i].revents & POLLNVAL) != 0) {
+      pe[i].m_revents |= PollEventMask::Invalid;
+    }
+  }
+
+  return n;
 }
 
-ArchNetAddress
-ArchNetworkBSD::nameToAddr(const std::string& name)
+void ArchNetworkBSD::unblockPollSocket(ArchThread thread)
 {
-    // allocate address
-    auto* addr = new ArchNetAddressImpl;
-
-    char ipstr[INET6_ADDRSTRLEN];
-    struct addrinfo hints;
-    struct addrinfo *p;
-    int ret;
-
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-
-    // done with static buffer
-    ARCH->lockMutex(m_mutex);
-    if ((ret = getaddrinfo(name.c_str(), NULL, &hints, &p)) != 0) {
-        ARCH->unlockMutex(m_mutex);
-        delete addr;
-        throwNameError(ret);
-    }
-
-    if (p->ai_family == AF_INET) {
-        addr->m_len = (socklen_t)sizeof(struct sockaddr_in);
-    } else {
-        addr->m_len = (socklen_t)sizeof(struct sockaddr_in6);
-    }
-    memcpy(&addr->m_addr, p->ai_addr, addr->m_len);
-    freeaddrinfo(p);
-    ARCH->unlockMutex(m_mutex);
-
-    return addr;
+  const int *unblockPipe = getUnblockPipeForThread(thread);
+  if (unblockPipe != nullptr) {
+    char dummy = 0;
+    std::ignore = write(unblockPipe[1], &dummy, 1);
+  }
 }
 
-void
-ArchNetworkBSD::closeAddr(ArchNetAddress addr)
+size_t ArchNetworkBSD::readSocket(ArchSocket s, void *buf, size_t len)
 {
-    assert(addr != NULL);
+  assert(s != nullptr);
 
+  ssize_t n = read(s->m_fd, buf, len);
+  if (n == -1) {
+    if (errno == EINTR || errno == EAGAIN) {
+      return 0;
+    }
+    throwError(errno);
+  }
+  return n;
+}
+
+size_t ArchNetworkBSD::writeSocket(ArchSocket s, const void *buf, size_t len)
+{
+  assert(s != nullptr);
+
+  ssize_t n = write(s->m_fd, buf, len);
+  if (n == -1) {
+    if (errno == EINTR || errno == EAGAIN) {
+      return 0;
+    }
+    throwError(errno);
+  }
+  return n;
+}
+
+void ArchNetworkBSD::throwErrorOnSocket(ArchSocket s)
+{
+  assert(s != nullptr);
+
+  // get the error from the socket layer
+  int err = 0;
+  if (auto size = static_cast<socklen_t>(sizeof(err));
+      getsockopt(s->m_fd, SOL_SOCKET, SO_ERROR, reinterpret_cast<optval_t *>(&err), &size) == -1) {
+    err = errno;
+  }
+
+  // throw if there's an error
+  if (err != 0) {
+    throwError(err);
+  }
+}
+
+void ArchNetworkBSD::setBlockingOnSocket(int fd, bool blocking) const
+{
+  assert(fd != -1);
+
+  int mode = fcntl(fd, F_GETFL, 0);
+  if (mode == -1) {
+    throwError(errno);
+  }
+  if (blocking) {
+    mode &= ~O_NONBLOCK;
+  } else {
+    mode |= O_NONBLOCK;
+  }
+  if (fcntl(fd, F_SETFL, mode) == -1) {
+    throwError(errno);
+  }
+}
+
+bool ArchNetworkBSD::setNoDelayOnSocket(ArchSocket s, bool noDelay)
+{
+  assert(s != nullptr);
+
+  // get old state
+  int oflag;
+  auto size = static_cast<socklen_t>(sizeof(oflag));
+  if (getsockopt(s->m_fd, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<optval_t *>(&oflag), &size) == -1) {
+    throwError(errno);
+  }
+
+  int flag = noDelay ? 1 : 0;
+  size = static_cast<socklen_t>(sizeof(flag));
+  if (setsockopt(s->m_fd, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<optval_t *>(&flag), size) == -1) {
+    throwError(errno);
+  }
+
+  return (oflag != 0);
+}
+
+void ArchNetworkBSD::setKeepAliveOnSocket(ArchSocket s, bool keepAlive)
+{
+  if (!s) {
+    throwError(EINVAL);
+  }
+  int opt = keepAlive;
+  if (setsockopt(s->m_fd, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<const optval_t *>(&opt), sizeof(opt)) == -1) {
+    throwError(errno);
+  }
+}
+
+bool ArchNetworkBSD::setReuseAddrOnSocket(ArchSocket s, bool reuse)
+{
+  assert(s != nullptr);
+
+  // get old state
+  int oflag;
+  auto size = static_cast<socklen_t>(sizeof(oflag));
+  if (getsockopt(s->m_fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<optval_t *>(&oflag), &size) == -1) {
+    throwError(errno);
+  }
+
+  int flag = reuse ? 1 : 0;
+  size = static_cast<socklen_t>(sizeof(flag));
+  if (setsockopt(s->m_fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<optval_t *>(&flag), size) == -1) {
+    throwError(errno);
+  }
+
+  return (oflag != 0);
+}
+
+ArchNetAddress ArchNetworkBSD::newAnyAddr(AddressFamily family)
+{
+  using enum AddressFamily;
+
+  // allocate address
+  auto *addr = new ArchNetAddressImpl;
+
+  // fill it in
+  switch (family) {
+  case INet: {
+    auto *ipAddr = TYPED_ADDR(struct sockaddr_in, addr);
+    ipAddr->sin_family = AF_INET;
+    ipAddr->sin_port = 0;
+    ipAddr->sin_addr.s_addr = INADDR_ANY;
+    addr->m_len = static_cast<socklen_t>(sizeof(struct sockaddr_in));
+    break;
+  }
+
+  case INet6: {
+    auto *ipAddr = TYPED_ADDR(struct sockaddr_in6, addr);
+    ipAddr->sin6_family = AF_INET6;
+    ipAddr->sin6_port = 0;
+    memcpy(&ipAddr->sin6_addr, &in6addr_any, sizeof(in6addr_any));
+    addr->m_len = (socklen_t)sizeof(struct sockaddr_in6);
+    break;
+  }
+  default:
     delete addr;
+    addr = nullptr;
+    assert(0 && "invalid family");
+  }
+
+  return addr;
 }
 
-std::string
-ArchNetworkBSD::addrToName(ArchNetAddress addr)
+ArchNetAddress ArchNetworkBSD::copyAddr(ArchNetAddress addr)
 {
-    assert(addr != NULL);
+  assert(addr != nullptr);
 
-    // mutexed name lookup (ugh)
-    ARCH->lockMutex(m_mutex);
-    char host[1024];
-    char service[20];
-    int ret = getnameinfo(TYPED_ADDR(struct sockaddr, addr), addr->m_len, host, sizeof(host), service, sizeof(service), 0);
-    if (ret != 0) {
-         ARCH->unlockMutex(m_mutex);
-         throwNameError(ret);
-    }
-
-    // save (primary) name
-    std::string name = host;
-
-    // done with static buffer
-    ARCH->unlockMutex(m_mutex);
-
-    return name;
+  // allocate and copy address
+  return new ArchNetAddressImpl(*addr);
 }
 
-std::string
-ArchNetworkBSD::addrToString(ArchNetAddress addr)
+std::vector<ArchNetAddress> ArchNetworkBSD::nameToAddr(const std::string &name)
 {
-    assert(addr != NULL);
+  struct addrinfo hints;
+  struct in6_addr serveraddr;
 
-    switch (getAddrFamily(addr)) {
-    case kINET: {
-        auto* ipAddr = TYPED_ADDR(struct sockaddr_in, addr);
-        ARCH->lockMutex(m_mutex);
-        std::string s = inet_ntoa(ipAddr->sin_addr);
-        ARCH->unlockMutex(m_mutex);
-        return s;
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_flags = AI_NUMERICSERV;
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+
+  if (inet_pton(AF_INET, name.c_str(), &serveraddr) == 1) {
+    hints.ai_family = AF_INET;
+    hints.ai_flags |= AI_NUMERICHOST;
+  } else if (inet_pton(AF_INET6, name.c_str(), &serveraddr) == 1) {
+    hints.ai_family = AF_INET6;
+    hints.ai_flags |= AI_NUMERICHOST;
+  }
+
+  // done with static buffer
+  std::scoped_lock lock{m_mutex};
+  struct addrinfo *pResult = nullptr;
+
+  if (int ret = getaddrinfo(name.c_str(), nullptr, &hints, &pResult); ret != 0) {
+    throwNameError(ret);
+  }
+
+  // allocate address
+  std::vector<ArchNetAddressImpl *> addresses;
+  for (auto address = pResult; address != nullptr; address = address->ai_next) {
+    addresses.push_back(new ArchNetAddressImpl);
+    if (address->ai_family == AF_INET) {
+      addresses.back()->m_len = (socklen_t)sizeof(struct sockaddr_in);
+    } else {
+      addresses.back()->m_len = (socklen_t)sizeof(struct sockaddr_in6);
     }
 
-    case kINET6: {
-        char strAddr[INET6_ADDRSTRLEN];
-        struct sockaddr_in6* ipAddr = TYPED_ADDR(struct sockaddr_in6, addr);
-        ARCH->lockMutex(m_mutex);
-        inet_ntop(AF_INET6, &ipAddr->sin6_addr, strAddr, INET6_ADDRSTRLEN);
-        ARCH->unlockMutex(m_mutex);
-        return strAddr;
-    }
+    memcpy(&addresses.back()->m_addr, address->ai_addr, addresses.back()->m_len);
+  }
 
-    default:
-        assert(0 && "unknown address family");
-        return "";
-    }
+  freeaddrinfo(pResult);
+
+  return addresses;
 }
 
-IArchNetwork::EAddressFamily
-ArchNetworkBSD::getAddrFamily(ArchNetAddress addr)
+void ArchNetworkBSD::closeAddr(ArchNetAddress addr)
 {
-    assert(addr != NULL);
+  assert(addr != nullptr);
 
-    switch (addr->m_addr.ss_family) {
-    case AF_INET:
-        return kINET;
-    case AF_INET6:
-        return kINET6;
-
-    default:
-        return kUNKNOWN;
-    }
+  delete addr;
 }
 
-void
-ArchNetworkBSD::setAddrPort(ArchNetAddress addr, int port)
+std::string ArchNetworkBSD::addrToName(ArchNetAddress addr)
 {
-    assert(addr != NULL);
+  assert(addr != nullptr);
 
-    switch (getAddrFamily(addr)) {
-    case kINET: {
-        auto* ipAddr = TYPED_ADDR(struct sockaddr_in, addr);
-        ipAddr->sin_port = htons(port);
-        break;
-    }
+  // mutexed name lookup (ugh)
+  std::scoped_lock lock{m_mutex};
+  char host[1024];
+  char service[20];
 
-    case kINET6: {
-        struct sockaddr_in6* ipAddr = TYPED_ADDR(struct sockaddr_in6, addr);
-        ipAddr->sin6_port = htons(port);
-        break;
-    }
+  if (int ret =
+          getnameinfo(TYPED_ADDR(struct sockaddr, addr), addr->m_len, host, sizeof(host), service, sizeof(service), 0);
+      ret != 0) {
+    throwNameError(ret);
+  }
 
-    default:
-        assert(0 && "unknown address family");
-        break;
-    }
+  // save (primary) name
+  std::string name = host;
+
+  return name;
 }
 
-int
-ArchNetworkBSD::getAddrPort(ArchNetAddress addr)
+std::string ArchNetworkBSD::addrToString(ArchNetAddress addr)
 {
-    assert(addr != NULL);
+  using enum AddressFamily;
 
-    switch (getAddrFamily(addr)) {
-    case kINET: {
-        auto* ipAddr = TYPED_ADDR(struct sockaddr_in, addr);
-        return ntohs(ipAddr->sin_port);
-    }
+  assert(addr != nullptr);
 
-    case kINET6: {
-        struct sockaddr_in6* ipAddr = TYPED_ADDR(struct sockaddr_in6, addr);
-        return ntohs(ipAddr->sin6_port);
+  switch (getAddrFamily(addr)) {
+  case INet: {
+    char strAddr[INET_ADDRSTRLEN];
+    const auto *ipAddr = TYPED_ADDR(struct sockaddr_in, addr);
+    {
+      std::scoped_lock lock{m_mutex};
+      inet_ntop(AF_INET, &ipAddr->sin_addr, strAddr, INET_ADDRSTRLEN);
     }
+    return strAddr;
+  }
 
-    default:
-        assert(0 && "unknown address family");
-        return 0;
+  case INet6: {
+    char strAddr[INET6_ADDRSTRLEN];
+    const auto *ipAddr = TYPED_ADDR(struct sockaddr_in6, addr);
+    {
+      std::scoped_lock lock{m_mutex};
+      inet_ntop(AF_INET6, &ipAddr->sin6_addr, strAddr, INET6_ADDRSTRLEN);
     }
+    return strAddr;
+  }
+
+  default:
+    assert(0 && "unknown address family");
+    return "";
+  }
 }
 
-bool
-ArchNetworkBSD::isAnyAddr(ArchNetAddress addr)
+IArchNetwork::AddressFamily ArchNetworkBSD::getAddrFamily(ArchNetAddress addr)
 {
-    assert(addr != NULL);
+  using enum AddressFamily;
 
-    switch (getAddrFamily(addr)) {
-    case kINET: {
-        auto* ipAddr = TYPED_ADDR(struct sockaddr_in, addr);
-        return (ipAddr->sin_addr.s_addr == INADDR_ANY &&
-                addr->m_len == static_cast<socklen_t>(sizeof(struct sockaddr_in)));
-    }
+  assert(addr != nullptr);
 
-    case kINET6: {
-        struct sockaddr_in6* ipAddr = TYPED_ADDR(struct sockaddr_in6, addr);
-        return (addr->m_len == (socklen_t)sizeof(struct sockaddr_in6) &&
-            memcmp(static_cast<const void*>(&ipAddr->sin6_addr), static_cast<const void*>(&in6addr_any), sizeof(in6_addr)) == 0);
-    }
+  switch (addr->m_addr.ss_family) {
+  case AF_INET:
+    return INet;
+  case AF_INET6:
+    return INet6;
 
-    default:
-        assert(0 && "unknown address family");
-        return true;
-    }
+  default:
+    return Unknown;
+  }
 }
 
-bool
-ArchNetworkBSD::isEqualAddr(ArchNetAddress a, ArchNetAddress b)
+void ArchNetworkBSD::setAddrPort(ArchNetAddress addr, int port)
 {
-    return (a->m_len == b->m_len &&
-            memcmp(&a->m_addr, &b->m_addr, a->m_len) == 0);
+  using enum AddressFamily;
+
+  assert(addr != nullptr);
+
+  switch (getAddrFamily(addr)) {
+  case INet: {
+    auto *ipAddr = TYPED_ADDR(struct sockaddr_in, addr);
+    ipAddr->sin_port = htons(port);
+    break;
+  }
+
+  case INet6: {
+    auto *ipAddr = TYPED_ADDR(struct sockaddr_in6, addr);
+    ipAddr->sin6_port = htons(port);
+    break;
+  }
+
+  default:
+    assert(0 && "unknown address family");
+    break;
+  }
 }
 
-const int*
-ArchNetworkBSD::getUnblockPipe()
+int ArchNetworkBSD::getAddrPort(ArchNetAddress addr)
 {
-    ArchMultithreadPosix* mt = ArchMultithreadPosix::getInstance();
-    ArchThread thread        = mt->newCurrentThread();
-    const int* p              = getUnblockPipeForThread(thread);
-    ARCH->closeThread(thread);
-    return p;
+  using enum AddressFamily;
+
+  assert(addr != nullptr);
+
+  switch (getAddrFamily(addr)) {
+  case INet: {
+    const auto *ipAddr = TYPED_ADDR(struct sockaddr_in, addr);
+    return ntohs(ipAddr->sin_port);
+  }
+
+  case INet6: {
+    const auto *ipAddr = TYPED_ADDR(struct sockaddr_in6, addr);
+    return ntohs(ipAddr->sin6_port);
+  }
+
+  default:
+    assert(0 && "unknown address family");
+    return 0;
+  }
 }
 
-const int*
-ArchNetworkBSD::getUnblockPipeForThread(ArchThread thread)
+bool ArchNetworkBSD::isAnyAddr(ArchNetAddress addr)
 {
-    ArchMultithreadPosix* mt = ArchMultithreadPosix::getInstance();
-    auto* unblockPipe          = static_cast<int*>(mt->getNetworkDataForThread(thread));
-    if (unblockPipe == nullptr) {
-        unblockPipe = new int[2];
-        if (pipe(unblockPipe) != -1) {
-            try {
-                setBlockingOnSocket(unblockPipe[0], false);
-                mt->setNetworkDataForCurrentThread(unblockPipe);
-            }
-            catch (...) {
-                delete[] unblockPipe;
-                unblockPipe = nullptr;
-            }
-        }
-        else {
-            delete[] unblockPipe;
-            unblockPipe = nullptr;
-        }
+  using enum AddressFamily;
+
+  assert(addr != nullptr);
+
+  switch (getAddrFamily(addr)) {
+  case INet: {
+    const auto *ipAddr = TYPED_ADDR(struct sockaddr_in, addr);
+    return (ipAddr->sin_addr.s_addr == INADDR_ANY && addr->m_len == static_cast<socklen_t>(sizeof(struct sockaddr_in)));
+  }
+
+  case INet6: {
+    const auto *ipAddr = TYPED_ADDR(struct sockaddr_in6, addr);
+    return (
+        addr->m_len == (socklen_t)sizeof(struct sockaddr_in6) &&
+        memcmp(
+            static_cast<const void *>(&ipAddr->sin6_addr), static_cast<const void *>(&in6addr_any), sizeof(in6_addr)
+        ) == 0
+    );
+  }
+
+  default:
+    assert(0 && "unknown address family");
+    return true;
+  }
+}
+
+bool ArchNetworkBSD::isEqualAddr(ArchNetAddress a, ArchNetAddress b)
+{
+  return (a->m_len == b->m_len && memcmp(&a->m_addr, &b->m_addr, a->m_len) == 0);
+}
+
+const int *ArchNetworkBSD::getUnblockPipe()
+{
+  ArchMultithreadPosix *mt = ArchMultithreadPosix::getInstance();
+  ArchThread thread = mt->newCurrentThread();
+  const int *p = getUnblockPipeForThread(thread);
+  ARCH->closeThread(thread);
+  return p;
+}
+
+const int *ArchNetworkBSD::getUnblockPipeForThread(ArchThread thread)
+{
+  ArchMultithreadPosix *mt = ArchMultithreadPosix::getInstance();
+  auto *unblockPipe = static_cast<int *>(mt->getNetworkDataForThread(thread));
+  if (unblockPipe == nullptr) {
+    unblockPipe = new int[2];
+    if (pipe(unblockPipe) != -1) {
+      try {
+        setBlockingOnSocket(unblockPipe[0], false);
+        mt->setNetworkDataForCurrentThread(unblockPipe);
+      } catch (...) {
+        delete[] unblockPipe;
+        unblockPipe = nullptr;
+      }
+    } else {
+      delete[] unblockPipe;
+      unblockPipe = nullptr;
     }
-    return unblockPipe;
+  }
+  return unblockPipe;
 }
 
-void
-ArchNetworkBSD::throwError(int err)
+[[noreturn]] void ArchNetworkBSD::throwError(int err) const
 {
-    switch (err) {
-    case EINTR:
-        ARCH->testCancelThread();
-        throw XArchNetworkInterrupted(new XArchEvalUnix(err));
+  switch (err) {
+  case EINTR:
+    ARCH->testCancelThread();
+    throw ArchNetworkInterruptedException(errorToString(err));
 
-    case EACCES:
-    case EPERM:
-        throw XArchNetworkAccess(new XArchEvalUnix(err));
+  case EACCES:
+  case EPERM:
+    throw ArchNetworkAccessException(errorToString(err));
 
-    case ENFILE:
-    case EMFILE:
-    case ENODEV:
-    case ENOBUFS:
-    case ENOMEM:
-    case ENETDOWN:
+  case ENFILE:
+  case EMFILE:
+  case ENODEV:
+  case ENOBUFS:
+  case ENOMEM:
+  case ENETDOWN:
 #if defined(ENOSR)
-    case ENOSR:
+  case ENOSR:
 #endif
-        throw XArchNetworkResource(new XArchEvalUnix(err));
+    throw ArchNetworkResourceException(errorToString(err));
 
-    case EPROTOTYPE:
-    case EPROTONOSUPPORT:
-    case EAFNOSUPPORT:
-    case EPFNOSUPPORT:
-    case ESOCKTNOSUPPORT:
-    case EINVAL:
-    case ENOPROTOOPT:
-    case EOPNOTSUPP:
-    case ESHUTDOWN:
+  case EPROTOTYPE:
+  case EPROTONOSUPPORT:
+  case EAFNOSUPPORT:
+  case EPFNOSUPPORT:
+  case ESOCKTNOSUPPORT:
+  case EINVAL:
+  case ENOPROTOOPT:
+  case EOPNOTSUPP:
+  case ESHUTDOWN:
 #if defined(ENOPKG)
-    case ENOPKG:
+  case ENOPKG:
 #endif
-        throw XArchNetworkSupport(new XArchEvalUnix(err));
+    throw ArchNetworkSupportException(errorToString(err));
 
-    case EIO:
-        throw XArchNetworkIO(new XArchEvalUnix(err));
+  case EIO:
+    throw ArchNetworkIOException(errorToString(err));
 
-    case EADDRNOTAVAIL:
-        throw XArchNetworkNoAddress(new XArchEvalUnix(err));
+  case EADDRNOTAVAIL:
+    throw ArchNetworkNoAddressException(errorToString(err));
 
-    case EADDRINUSE:
-        throw XArchNetworkAddressInUse(new XArchEvalUnix(err));
+  case EADDRINUSE:
+    throw ArchNetworkAddressInUseException(errorToString(err));
 
-    case EHOSTUNREACH:
-    case ENETUNREACH:
-        throw XArchNetworkNoRoute(new XArchEvalUnix(err));
+  case EHOSTUNREACH:
+  case ENETUNREACH:
+    throw ArchNetworkNoRouteException(errorToString(err));
 
-    case ENOTCONN:
-        throw XArchNetworkNotConnected(new XArchEvalUnix(err));
+  case ENOTCONN:
+    throw ArchNetworkNotConnectedException(errorToString(err));
 
-    case EPIPE:
-        throw XArchNetworkShutdown(new XArchEvalUnix(err));
+  case EPIPE:
+    throw ArchNetworkShutdownException(errorToString(err));
 
-    case ECONNABORTED:
-    case ECONNRESET:
-        throw XArchNetworkDisconnected(new XArchEvalUnix(err));
+  case ECONNABORTED:
+  case ECONNRESET:
+    throw ArchNetworkDisconnectedException(errorToString(err));
 
-    case ECONNREFUSED:
-        throw XArchNetworkConnectionRefused(new XArchEvalUnix(err));
+  case ECONNREFUSED:
+    throw ArchNetworkConnectionRefusedException(errorToString(err));
 
-    case EHOSTDOWN:
-    case ETIMEDOUT:
-        throw XArchNetworkTimedOut(new XArchEvalUnix(err));
+  case EHOSTDOWN:
+  case ETIMEDOUT:
+    throw ArchNetworkTimedOutException(errorToString(err));
 
-    default:
-        throw XArchNetwork(new XArchEvalUnix(err));
-    }
+  default:
+    throw ArchNetworkException(errorToString(err));
+  }
 }
 
-void
-ArchNetworkBSD::throwNameError(int err)
+[[noreturn]] void ArchNetworkBSD::throwNameError(int err) const
 {
-    static const char* s_msg[] = {
-        "The specified host is unknown",
-        "The requested name is valid but does not have an IP address",
-        "A non-recoverable name server error occurred",
-        "A temporary error occurred on an authoritative name server",
-        "An unknown name server error occurred"
-    };
+  static const char *s_msg[] = {
+      "The specified host is unknown", "The requested name is valid but does not have an IP address",
+      "A non-recoverable name server error occurred", "A temporary error occurred on an authoritative name server",
+      "An unknown name server error occurred"
+  };
 
-    switch (err) {
-    case HOST_NOT_FOUND:
-        throw XArchNetworkNameUnknown(s_msg[0]);
+  switch (err) {
+  case HOST_NOT_FOUND:
+    throw ArchNetworkNameUnknownException(s_msg[0]);
 
-    case NO_DATA:
-        throw XArchNetworkNameNoAddress(s_msg[1]);
+  case NO_DATA:
+    throw ArchNetworkNameNoAddressException(s_msg[1]);
 
-    case NO_RECOVERY:
-        throw XArchNetworkNameFailure(s_msg[2]);
+  case NO_RECOVERY:
+    throw ArchNetworkNameFailureException(s_msg[2]);
 
-    case TRY_AGAIN:
-        throw XArchNetworkNameUnavailable(s_msg[3]);
+  case TRY_AGAIN:
+    throw ArchNetworkNameUnavailableException(s_msg[3]);
 
-    default:
-        throw XArchNetworkName(s_msg[4]);
-    }
+  default:
+    throw ArchNetworkNameException(s_msg[4]);
+  }
 }

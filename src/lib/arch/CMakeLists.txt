@@ -1,44 +1,46 @@
-# synergy -- mouse and keyboard sharing utility
-# Copyright (C) 2012-2016 Symless Ltd.
-# Copyright (C) 2009 Nick Bolton
-# 
-# This package is free software; you can redistribute it and/or
-# modify it under the terms of the GNU General Public License
-# found in the file LICENSE that should have accompanied this file.
-# 
-# This package is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# SPDX-FileCopyrightText: (C) 2024 - 2025 Chris Rizzitello <sithlord48@gmail.com>
+# SPDX-FileCopyrightText: (C) 2012 - 2024 Symless Ltd
+# SPDX-FileCopyrightText: (C) 2009 - 2012 Nick Bolton
+# SPDX-License-Identifier: MIT
 
-file(GLOB headers "*.h")
-file(GLOB sources "*.cpp")
+# Platform Specific Code
+if(WIN32)
+  set(PLATFORM_CODE
+    win32/ArchDaemonWindows.cpp
+    win32/ArchDaemonWindows.h
+    win32/ArchLogWindows.cpp
+    win32/ArchLogWindows.h
+    win32/ArchMiscWindows.cpp
+    win32/ArchMiscWindows.h
+    win32/ArchMultithreadWindows.cpp
+    win32/ArchMultithreadWindows.h
+    win32/ArchNetworkWinsock.cpp
+    win32/ArchNetworkWinsock.h
+    win32/XArchWindows.cpp
+    win32/XArchWindows.h
+  )
 
-if (SYNERGY_ADD_HEADERS)
-    list(APPEND sources ${headers})
+elseif(UNIX)
+  set(PLATFORM_CODE
+    unix/ArchLogUnix.cpp
+    unix/ArchLogUnix.h
+    unix/ArchMultithreadPosix.cpp
+    unix/ArchMultithreadPosix.h
+    unix/ArchNetworkBSD.cpp
+    unix/ArchNetworkBSD.h
+    unix/XArchUnix.cpp
+    unix/XArchUnix.h
+  )
 endif()
 
-# arch
-if (WIN32)
-    file(GLOB arch_headers "win32/*.h")
-    file(GLOB arch_sources "win32/*.cpp")
-elseif (UNIX)
-    file(GLOB arch_headers "unix/*.h")
-    file(GLOB arch_sources "unix/*.cpp")
-endif()
+add_library(arch STATIC ${PLATFORM_CODE}
+  Arch.cpp
+  Arch.h
+  ArchException.h
+  IArchDaemon.h
+  IArchLog.h
+  IArchMultithread.h
+  IArchNetwork.h
+)
 
-list(APPEND sources ${arch_sources})
-list(APPEND headers ${arch_headers})
-
-if (SYNERGY_ADD_HEADERS)
-    list(APPEND sources ${headers})
-endif()
-
-add_library(arch STATIC ${sources})
-
-if (UNIX)
-    target_link_libraries(arch ${CMAKE_DL_LIBS} ${libs})
-endif()
+target_link_libraries (arch PUBLIC common)

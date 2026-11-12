@@ -1,38 +1,62 @@
-# synergy -- mouse and keyboard sharing utility
-# Copyright (C) 2012-2016 Symless Ltd.
-# Copyright (C) 2009 Nick Bolton
-# 
-# This package is free software; you can redistribute it and/or
-# modify it under the terms of the GNU General Public License
-# found in the file LICENSE that should have accompanied this file.
-# 
-# This package is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# SPDX-FileCopyrightText: (C) 2024 - 2025 Chris Rizzitello <sithlord48@gmail.com>
+# SPDX-FileCopyrightText: (C) 2012 - 2024 Symless Ltd
+# SPDX-FileCopyrightText: (C) 2009 - 2012 Nick Bolton
+# SPDX-License-Identifier: MIT
 
-file(GLOB headers "*.h")
-file(GLOB sources "*.cpp")
-
-if (SYNERGY_ADD_HEADERS)
-    list(APPEND sources ${headers})
+# Apple has to use static libraries because "Use of the Apple-provided OpenSSL
+# libraries by apps is strongly discouraged."
+# https://developer.apple.com/library/archive/documentation/Security/Conceptual/cryptoservices/SecureNetworkCommunicationAPIs/SecureNetworkCommunicationAPIs.html
+if(APPLE)
+  set(OPENSSL_USE_STATIC_LIBS TRUE)
 endif()
 
-add_library(net STATIC ${sources})
-target_link_libraries(net
-    PUBLIC
-        OpenSSL::SSL
-    PRIVATE
-        mt
-        io
+find_package(Qt6 ${REQUIRED_QT_VERSION} REQUIRED COMPONENTS Network)
+find_package(OpenSSL ${REQUIRED_OPENSSL_VERSION} REQUIRED COMPONENTS SSL Crypto)
+
+add_library(net STATIC
+  Fingerprint.cpp
+  Fingerprint.h
+  FingerprintDatabase.cpp
+  FingerprintDatabase.h
+  IDataSocket.cpp
+  IDataSocket.h
+  IListenSocket.h
+  ISocket.h
+  ISocketFactory.h
+  ISocketMultiplexerJob.h
+  NetworkAddress.cpp
+  NetworkAddress.h
+  SecureListenSocket.cpp
+  SecureListenSocket.h
+  SecurityLevel.h
+  SecureSocket.cpp
+  SecureSocket.h
+  SocketException.cpp
+  SocketException.h
+  SocketMultiplexer.cpp
+  SocketMultiplexer.h
+  SecureUtils.cpp
+  SecureUtils.h
+  SslLogger.cpp
+  SslLogger.h
+  TCPListenSocket.cpp
+  TCPListenSocket.h
+  TCPSocket.cpp
+  TCPSocket.h
+  TCPSocketFactory.cpp
+  TCPSocketFactory.h
+  TSocketMultiplexerMethodJob.h
 )
+
+target_link_libraries(
+  net
+  PUBLIC OpenSSL::SSL OpenSSL::Crypto Qt6::Network common
+  PRIVATE mt io)
+
 if(WIN32)
-    target_link_libraries(net
-        PRIVATE
-            Crypt32
-            ws2_32
-    )
+  target_link_libraries(
+    net
+    PUBLIC OpenSSL::applink
+    PRIVATE Crypt32 ws2_32
+  )
 endif()

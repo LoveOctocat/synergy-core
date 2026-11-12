@@ -1,27 +1,51 @@
-.vscode
-config.h
-.DS_Store
-*.pyc
-*.o
-*~
-\.*.swp
-*build-gui-Desktop_Qt*
-/bin
-/lib
+# SPDX-FileCopyrightText: Copyright (C) 2024 Chris Rizzitello <sithlord48@gmail.com>
+# SPDX-FileCopyrightText: Copyright (C) 2011 Synergy App Ltd
+# SPDX-FileCopyrightText: Copyright (C) 2010 Jason Axelson <BostonVaulter@gmail.com>
+# SPDX-License-Identifier: MIT
+
+# temp dirs created during build
 /build
-/CMakeFiles
-/src/gui/Makefile*
-/src/gui/object_script*
-/src/gui/tmp
-/src/gui/ui_*
-src/gui/gui.pro.user*
-src/gui/.qmake.stash
-src/gui/.rnd
-src/setup/win32/synergy.suo
-/.idea
-/cmake-build-*
-/CMakeLists.txt.user
-/.vs
-/CMakeLists.txt.*
-/doxygen/
-deps
+/dist
+/deps
+/tmp
+/vcpkg
+/vcpkg_installed
+/.cache
+/.venv
+aqtinstall.log
+Brewfile.lock.json
+
+# typical developer-created files
+deskflow-config.toml
+.vscode
+.DS_Store
+*.code-workspace
+.env*
+/scripts/*.egg-info
+/*.user
+*.ui.autosave
+
+#Qt creator 18 user files
+/.qtcreator
+
+# generated vcpkg file
+vcpkg.json
+
+#Generic linux files
+**/*.directory
+
+#CMake ignores
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeUserPresets.json
+CMakeFiles/*
+
+# vscode folder
+/.vscode
+
+# scripts folder
+/scripts
+
+# Ai helperfilers
+**/[cC]laude.[mM][dD]
+**/CLAUDE.[mM][dD]

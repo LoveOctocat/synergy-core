@@ -1,19 +1,8 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2004 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2012 - 2016 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2004 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #include "platform/OSXClipboardUTF16Converter.h"
@@ -24,32 +13,19 @@
 // OSXClipboardUTF16Converter
 //
 
-OSXClipboardUTF16Converter::OSXClipboardUTF16Converter()
+CFStringRef OSXClipboardUTF16Converter::getOSXFormat() const
 {
-    // do nothing
+  return CFSTR("public.utf16-plain-text");
 }
 
-OSXClipboardUTF16Converter::~OSXClipboardUTF16Converter()
+std::string OSXClipboardUTF16Converter::doFromIClipboard(const std::string &data) const
 {
-    // do nothing
+  // convert and add nul terminator
+  return Unicode::UTF8ToUTF16(data);
 }
 
-CFStringRef
-OSXClipboardUTF16Converter::getOSXFormat() const
+std::string OSXClipboardUTF16Converter::doToIClipboard(const std::string &data) const
 {
-    return CFSTR("public.utf16-plain-text");
-}
-
-String
-OSXClipboardUTF16Converter::doFromIClipboard(const String& data) const
-{
-    // convert and add nul terminator
-    return Unicode::UTF8ToUTF16(data);
-}
-
-String
-OSXClipboardUTF16Converter::doToIClipboard(const String& data) const
-{
-    // convert and strip nul terminator
-    return Unicode::UTF16ToUTF8(data);
+  // convert and strip nul terminator
+  return Unicode::UTF16ToUTF8(data);
 }

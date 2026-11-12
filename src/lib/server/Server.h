@@ -1,490 +1,471 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2002 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2025 Deskflow Developers
+ * SPDX-FileCopyrightText: (C) 2012 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2002 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #pragma once
 
-#include "server/Config.h"
-#include "synergy/clipboard_types.h"
-#include "synergy/Clipboard.h"
-#include "synergy/key_types.h"
-#include "synergy/mouse_types.h"
-#include "synergy/INode.h"
-#include "synergy/DragInformation.h"
-#include "synergy/ServerArgs.h"
 #include "base/Event.h"
 #include "base/Stopwatch.h"
-#include "base/EventTypes.h"
-#include "common/stdmap.h"
-#include "common/stdset.h"
-#include "common/stdvector.h"
+#include "common/NetworkProtocol.h"
+#include "deskflow/Clipboard.h"
+#include "deskflow/ClipboardTypes.h"
+#include "deskflow/KeyTypes.h"
+#include "deskflow/MouseTypes.h"
+#include "server/Config.h"
+
+#include <climits>
+#include <map>
+#include <set>
+#include <vector>
 
 class BaseClientProxy;
 class EventQueueTimer;
 class PrimaryClient;
 class InputFilter;
-namespace synergy { class Screen; }
+namespace deskflow {
+class Computer;
+}
 class IEventQueue;
 class Thread;
 class ClientListener;
 
-//! Synergy server
+//! Deskflow server
 /*!
-This class implements the top-level server algorithms for synergy.
+This class implements the top-level server algorithms for deskflow.
 */
-class Server : public INode {
-public:
-    //! Lock cursor to screen data
-    class LockCursorToScreenInfo {
-    public:
-        enum State { kOff, kOn, kToggle };
-
-        static LockCursorToScreenInfo* alloc(State state = kToggle);
-
-    public:
-        State            m_state;
-    };
-
-    //! Switch to screen data
-    class SwitchToScreenInfo {
-    public:
-        static SwitchToScreenInfo* alloc(const String& screen);
-
-    public:
-        // this is a C-string;  this type is a variable size structure
-        char            m_screen[1];
-    };
-
-    //! Switch in direction data
-    class SwitchInDirectionInfo {
-    public:
-        static SwitchInDirectionInfo* alloc(EDirection direction);
-
-    public:
-        EDirection        m_direction;
-    };
-
-    //! Screen connected data
-    class ScreenConnectedInfo {
-    public:
-        ScreenConnectedInfo(String screen) : m_screen(screen) { }
-
-    public:
-        String            m_screen; // was char[1]
-    };
-
-    //! Keyboard broadcast data
-    class KeyboardBroadcastInfo {
-    public:
-        enum State { kOff, kOn, kToggle };
-
-        static KeyboardBroadcastInfo* alloc(State state = kToggle);
-        static KeyboardBroadcastInfo* alloc(State state,
-                                            const String& screens);
-
-    public:
-        State            m_state;
-        char            m_screens[1];
-    };
-
-    /*!
-    Start the server with the configuration \p config and the primary
-    client (local screen) \p primaryClient.  The client retains
-    ownership of \p primaryClient.
-    */
-    Server(Config& config, PrimaryClient* primaryClient,
-        synergy::Screen* screen, IEventQueue* events, lib::synergy::ServerArgs const& args);
-    Server(Server const &) =delete;
-    Server(Server &&) =delete;
-    ~Server();
-
-    Server& operator=(Server const &) =delete;
-    Server& operator=(Server &&) =delete;
-
-#ifdef TEST_ENV
-    Server() : m_mock(true), m_config(NULL) { }
-    void setActive(BaseClientProxy* active) {    m_active = active; }
-#endif
-
-    //! @name manipulators
-    //@{
-
-    //! Set configuration
-    /*!
-    Change the server's configuration.  Returns true iff the new
-    configuration was accepted (it must include the server's name).
-    This will disconnect any clients no longer in the configuration.
-    */
-    bool                setConfig(const Config&);
-
-    //! Add a client
-    /*!
-    Adds \p client to the server.  The client is adopted and will be
-    destroyed when the client disconnects or is disconnected.
-    */
-    void                adoptClient(BaseClientProxy* client);
-
-    //! Disconnect clients
-    /*!
-    Disconnect clients.  This tells them to disconnect but does not wait
-    for them to actually do so.  The server sends the disconnected event
-    when they're all disconnected (or immediately if none are connected).
-    The caller can also just destroy this object to force the disconnection.
-    */
-    void                disconnect();
-
-    //! Create a new thread and use it to send file to client
-    void                sendFileToClient(const char* filename);
-
-    //! Received dragging information from client
-    void                dragInfoReceived(UInt32 fileNum, String content);
-
-    //! Store ClientListener pointer
-    void                setListener(ClientListener* p) { m_clientListener = p; }
-    
-    //@}
-    //! @name accessors
-    //@{
-
-    //! Get number of connected clients
-    /*!
-    Returns the number of connected clients, including the server itself.
-    */
-    UInt32                getNumClients() const;
-
-    //! Get the list of connected clients
-    /*!
-    Set the \c list to the names of the currently connected clients.
-    */
-    void                getClients(std::vector<String>& list) const;
-    
-    //! Return true if recieved file size is valid
-    bool                isReceivedFileSizeValid();
-
-    //! Return expected file data size
-    size_t&                getExpectedFileSize() { return m_expectedFileSize; }
-
-    //! Return received file data
-    String&                getReceivedFileData() { return m_receivedFileData; }
-
-    //! Return fake drag file list
-    DragFileList        getFakeDragFileList() { return m_fakeDragFileList; }
-
-    //@}
-
-private:
-    // get canonical name of client
-    String                getName(const BaseClientProxy*) const;
-
-    // get the sides of the primary screen that have neighbors
-    UInt32                getActivePrimarySides() const;
-
-    // returns true iff mouse should be locked to the current screen
-    // according to this object only, ignoring what the primary client
-    // says.
-    bool                isLockedToScreenServer() const;
-
-    // returns true iff mouse should be locked to the current screen
-    // according to this object or the primary client.
-    bool                isLockedToScreen() const;
-
-    // returns the jump zone of the client
-    SInt32                getJumpZoneSize(BaseClientProxy*) const;
-
-    // change the active screen
-    void                switchScreen(BaseClientProxy*,
-                            SInt32 x, SInt32 y, bool forScreenSaver);
-
-    // jump to screen
-    void                jumpToScreen(BaseClientProxy*);
-
-    // convert pixel position to fraction, using x or y depending on the
-    // direction.
-    float                mapToFraction(BaseClientProxy*, EDirection,
-                            SInt32 x, SInt32 y) const;
-
-    // convert fraction to pixel position, writing only x or y depending
-    // on the direction.
-    void                mapToPixel(BaseClientProxy*, EDirection, float f,
-                            SInt32& x, SInt32& y) const;
-
-    // returns true if the client has a neighbor anywhere along the edge
-    // indicated by the direction.
-    bool                hasAnyNeighbor(BaseClientProxy*, EDirection) const;
-
-    // lookup neighboring screen, mapping the coordinate independent of
-    // the direction to the neighbor's coordinate space.
-    BaseClientProxy*    getNeighbor(BaseClientProxy*, EDirection,
-                            SInt32& x, SInt32& y) const;
-
-    // lookup neighboring screen.  given a position relative to the
-    // source screen, find the screen we should move onto and where.
-    // if the position is sufficiently far from the source then we
-    // cross multiple screens.  if there is no suitable screen then
-    // return NULL and x,y are not modified.
-    BaseClientProxy*    mapToNeighbor(BaseClientProxy*, EDirection,
-                            SInt32& x, SInt32& y) const;
-
-    // adjusts x and y or neither to avoid ending up in a jump zone
-    // after entering the client in the given direction.
-    void                avoidJumpZone(BaseClientProxy*, EDirection,
-                            SInt32& x, SInt32& y) const;
-
-    // test if a switch is permitted.  this includes testing user
-    // options like switch delay and tracking any state required to
-    // implement them.  returns true iff a switch is permitted.
-    bool                isSwitchOkay(BaseClientProxy* dst, EDirection,
-                            SInt32 x, SInt32 y, SInt32 xActive, SInt32 yActive);
-
-    // update switch state due to a mouse move at \p x, \p y that
-    // doesn't switch screens.
-    void                noSwitch(SInt32 x, SInt32 y);
-
-    // stop switch timers
-    void                stopSwitch();
-
-    // start two tap switch timer
-    void                startSwitchTwoTap();
-
-    // arm the two tap switch timer if \p x, \p y is outside the tap zone
-    void                armSwitchTwoTap(SInt32 x, SInt32 y);
-
-    // stop the two tap switch timer
-    void                stopSwitchTwoTap();
-
-    // returns true iff the two tap switch timer is started
-    bool                isSwitchTwoTapStarted() const;
-
-    // returns true iff should switch because of two tap
-    bool                shouldSwitchTwoTap() const;
-
-    // start delay switch timer
-    void                startSwitchWait(SInt32 x, SInt32 y);
-
-    // stop delay switch timer
-    void                stopSwitchWait();
-
-    // returns true iff the delay switch timer is started
-    bool                isSwitchWaitStarted() const;
-
-    // returns the corner (EScreenSwitchCornerMasks) where x,y is on the
-    // given client.  corners have the given size.
-    UInt32                getCorner(BaseClientProxy*,
-                            SInt32 x, SInt32 y, SInt32 size) const;
-
-    // stop relative mouse moves
-    void                stopRelativeMoves();
-
-    // send screen options to \c client
-    void                sendOptions(BaseClientProxy* client) const;
-
-    // process options from configuration
-    void                processOptions();
-
-    // event handlers
-    void                handleShapeChanged(const Event&, void*);
-    void                handleClipboardGrabbed(const Event&, void*);
-    void                handleClipboardChanged(const Event&, void*);
-    void                handleKeyDownEvent(const Event&, void*);
-    void                handleKeyUpEvent(const Event&, void*);
-    void                handleKeyRepeatEvent(const Event&, void*);
-    void                handleButtonDownEvent(const Event&, void*);
-    void                handleButtonUpEvent(const Event&, void*);
-    void                handleMotionPrimaryEvent(const Event&, void*);
-    void                handleMotionSecondaryEvent(const Event&, void*);
-    void                handleWheelEvent(const Event&, void*);
-    void                handleScreensaverActivatedEvent(const Event&, void*);
-    void                handleScreensaverDeactivatedEvent(const Event&, void*);
-    void                handleSwitchWaitTimeout(const Event&, void*);
-    void                handleClientDisconnected(const Event&, void*);
-    void                handleClientCloseTimeout(const Event&, void*);
-    void                handleSwitchToScreenEvent(const Event&, void*);
-    void                handleSwitchInDirectionEvent(const Event&, void*);
-    void                handleKeyboardBroadcastEvent(const Event&,void*);
-    void                handleLockCursorToScreenEvent(const Event&, void*);
-    void                handleFakeInputBeginEvent(const Event&, void*);
-    void                handleFakeInputEndEvent(const Event&, void*);
-    void                handleFileChunkSendingEvent(const Event&, void*);
-    void                handleFileRecieveCompletedEvent(const Event&, void*);
-
-    // event processing
-    void                onClipboardChanged(BaseClientProxy* sender,
-                            ClipboardID id, UInt32 seqNum);
-    void                onScreensaver(bool activated);
-    void                onKeyDown(KeyID, KeyModifierMask, KeyButton,
-                            const char* screens);
-    void                onKeyUp(KeyID, KeyModifierMask, KeyButton,
-                            const char* screens);
-    void                onKeyRepeat(KeyID, KeyModifierMask, SInt32, KeyButton);
-    void                onMouseDown(ButtonID);
-    void                onMouseUp(ButtonID);
-    bool                onMouseMovePrimary(SInt32 x, SInt32 y);
-    void                onMouseMoveSecondary(SInt32 dx, SInt32 dy);
-    void                onMouseWheel(SInt32 xDelta, SInt32 yDelta);
-    void                onFileChunkSending(const void* data);
-    void                onFileRecieveCompleted();
-
-    // add client to list and attach event handlers for client
-    bool                addClient(BaseClientProxy*);
-
-    // remove client from list and detach event handlers for client
-    bool                removeClient(BaseClientProxy*);
-
-    // close a client
-    void                closeClient(BaseClientProxy*, const char* msg);
-
-    // close clients not in \p config
-    void                closeClients(const Config& config);
-
-    // close all clients whether they've completed the handshake or not,
-    // except the primary client
-    void                closeAllClients();
-
-    // remove clients from internal state
-    void                removeActiveClient(BaseClientProxy*);
-    void                removeOldClient(BaseClientProxy*);
-
-    // force the cursor off of \p client
-    void                forceLeaveClient(BaseClientProxy* client);
-    
-    // thread funciton for sending file
-    void                sendFileThread(void*);
-    
-    // thread function for writing file to drop directory
-    void                writeToDropDirThread(void*);
-
-    // thread function for sending drag information
-    void                sendDragInfoThread(void*);
-
-    // send drag info to new client screen
-    void                sendDragInfo(BaseClientProxy* newScreen);
+class Server
+{
+  using ServerConfig = deskflow::server::Config;
 
 public:
-    bool                m_mock;
-
-private:
-    class ClipboardInfo {
-    public:
-        ClipboardInfo();
-
-    public:
-        Clipboard        m_clipboard;
-        String            m_clipboardData;
-        String            m_clipboardOwner;
-        UInt32            m_clipboardSeqNum;
+  //! Lock cursor to computer data
+  class LockCursorToComputerInfo : public EventData
+  {
+  public:
+    enum State
+    {
+      kOff,
+      kOn,
+      kToggle
     };
 
-    // the primary screen client
-    PrimaryClient*        m_primaryClient;
+    explicit LockCursorToComputerInfo(State state = kToggle) : m_state(state)
+    {
+      // do nothing
+    }
+    ~LockCursorToComputerInfo() override = default; // do nothing
 
-    // all clients (including the primary client) indexed by name
-    typedef std::map<String, BaseClientProxy*> ClientList;
-    typedef std::set<BaseClientProxy*> ClientSet;
-    ClientList            m_clients;
-    ClientSet            m_clientSet;
+  public:
+    State m_state;
+  };
 
-    // all old connections that we're waiting to hangup
-    typedef std::map<BaseClientProxy*, EventQueueTimer*> OldClients;
-    OldClients            m_oldClients;
+  //! Switch to computer data
+  class SwitchToComputerInfo : public EventData
+  {
+  public:
+    explicit SwitchToComputerInfo(const std::string &computer) : m_computer(computer)
+    {
+      // do nothing
+    }
+    ~SwitchToComputerInfo() override = default; // do nothing
 
-    // the client with focus
-    BaseClientProxy*    m_active;
+  public:
+    std::string m_computer;
+  };
 
-    // the sequence number of enter messages
-    UInt32                m_seqNum;
+  //! Switch in direction data
+  class SwitchInDirectionInfo : public EventData
+  {
+  public:
+    explicit SwitchInDirectionInfo(Direction direction) : m_direction(direction)
+    {
+      // do nothing
+    }
+    ~SwitchInDirectionInfo() override = default; // do nothing
 
-    // current mouse position (in absolute screen coordinates) on
-    // whichever screen is active
-    SInt32                m_x, m_y;
+  public:
+    Direction m_direction;
+  };
 
-    // last mouse deltas.  this is needed to smooth out double tap
-    // on win32 which reports bogus mouse motion at the edge of
-    // the screen when using low level hooks, synthesizing motion
-    // in the opposite direction the mouse actually moved.
-    SInt32                m_xDelta, m_yDelta;
-    SInt32                m_xDelta2, m_yDelta2;
+  //! Computer connected data
+  class ComputerConnectedInfo
+  {
+  public:
+    explicit ComputerConnectedInfo(std::string computer) : m_computer(computer)
+    {
+      // do nothing
+    }
 
-    // current configuration
-    Config*                m_config;
+  public:
+    std::string m_computer; // was char[1]
+  };
 
-    // input filter (from m_config);
-    InputFilter*        m_inputFilter;
+  //! Keyboard broadcast data
+  class KeyboardBroadcastInfo : public EventData
+  {
+  public:
+    enum State
+    {
+      kOff,
+      kOn,
+      kToggle
+    };
 
-    // clipboard cache
-    ClipboardInfo        m_clipboards[kClipboardEnd];
+    explicit KeyboardBroadcastInfo(State state = kToggle) : m_state(state)
+    {
+      // do nothing
+    }
+    KeyboardBroadcastInfo(State state, const std::string &computers) : m_state(state), m_computers(computers)
+    {
+      // do nothing
+    }
+    ~KeyboardBroadcastInfo() override = default; // do nothing
 
-    // state saved when screen saver activates
-    BaseClientProxy*    m_activeSaver;
-    SInt32                m_xSaver, m_ySaver;
+  public:
+    State m_state;
+    std::string m_computers;
+  };
 
-    // common state for screen switch tests.  all tests are always
-    // trying to reach the same screen in the same direction.
-    EDirection            m_switchDir;
-    BaseClientProxy*    m_switchScreen;
+  /*!
+  Start the server with the configuration \p config and the primary
+  client (local computer) \p primaryClient.  The client retains
+  ownership of \p primaryClient.
+  */
+  Server(ServerConfig &config, PrimaryClient *primaryClient, deskflow::Computer *computer, IEventQueue *events);
+  Server(Server const &) = delete;
+  Server(Server &&) = delete;
+  ~Server();
 
-    // state for delayed screen switching
-    double                m_switchWaitDelay;
-    EventQueueTimer*    m_switchWaitTimer;
-    SInt32                m_switchWaitX, m_switchWaitY;
+  Server &operator=(Server const &) = delete;
+  Server &operator=(Server &&) = delete;
 
-    // state for double-tap screen switching
-    double                m_switchTwoTapDelay;
-    Stopwatch            m_switchTwoTapTimer;
-    bool                m_switchTwoTapEngaged;
-    bool                m_switchTwoTapArmed;
-    SInt32                m_switchTwoTapZone;
+  //! @name manipulators
+  //@{
 
-    // modifiers needed before switching
-    bool                m_switchNeedsShift;
-    bool                m_switchNeedsControl;
-    bool                m_switchNeedsAlt;
-    
-    // relative mouse move option
-    bool                m_relativeMoves;
+  //! Set configuration
+  /*!
+  Change the server's configuration.  Returns true iff the new
+  configuration was accepted (it must include the server's name).
+  This will disconnect any clients no longer in the configuration.
+  */
+  bool setConfig(const ServerConfig &);
 
-    // flag whether or not we have broadcasting enabled and the screens to
-    // which we should send broadcasted keys.
-    bool                m_keyboardBroadcasting;
-    String                m_keyboardBroadcastingScreens;
+  //! Add a client
+  /*!
+  Adds \p client to the server.  The client is adopted and will be
+  destroyed when the client disconnects or is disconnected.
+  */
+  void adoptClient(BaseClientProxy *client);
 
-    // screen locking (former scroll lock)
-    bool                m_lockedToScreen;
+  //! Disconnect clients
+  /*!
+  Disconnect clients.  This tells them to disconnect but does not wait
+  for them to actually do so.  The server sends the disconnected event
+  when they're all disconnected (or immediately if none are connected).
+  The caller can also just destroy this object to force the disconnection.
+  */
+  void disconnect();
 
-    // server screen
-    synergy::Screen*    m_screen;
+  //! Store ClientListener pointer
+  void setListener(ClientListener *p)
+  {
+    m_clientListener = p;
+  }
 
-    IEventQueue*        m_events;
+  //@}
+  //! @name accessors
+  //@{
 
-    // file transfer
-    size_t                m_expectedFileSize;
-    String                m_receivedFileData;
-    DragFileList        m_dragFileList;
-    DragFileList        m_fakeDragFileList;
-    Thread*                m_sendFileThread;
-    Thread*                m_writeToDropDirThread;
-    String                m_dragFileExt;
-    bool                m_ignoreFileTransfer;
-    bool                m_disableLockToScreen;
-    bool                m_enableClipboard;
-    size_t				m_maximumClipboardSize;
+  //! Get the network protocol
+  /*!
+  Returns the network protocol used by the server.
+  */
+  std::string protocolString() const;
 
-    Thread*                m_sendDragInfoThread;
-    bool                m_waitDragInfoThread;
+  //! Get number of connected clients
+  /*!
+  Returns the number of connected clients, including the server itself.
+  */
+  uint32_t getNumClients() const;
 
-    ClientListener*        m_clientListener;
-    lib::synergy::ServerArgs            m_args;
+  //! Get the list of connected clients
+  /*!
+  Set the \c list to the names of the currently connected clients.
+  */
+  void getClients(std::vector<std::string> &list) const;
+  void sendConnectedClientsIpc() const;
+  size_t getMaximumClipboardSizeBytes() const;
+
+  //@}
+
+private:
+  // get canonical name of client
+  std::string getName(const BaseClientProxy *) const;
+
+  // get the sides of the primary computer that have neighbors
+  uint32_t getActivePrimarySides() const;
+
+  // returns true iff mouse should be locked to the current computer
+  // according to this object only, ignoring what the primary client
+  // says.
+  bool isLockedToComputerServer() const;
+
+  // returns true iff mouse should be locked to the current m_computer
+  // according to this object or the primary client.
+  bool isLockedToComputer() const;
+
+  // returns the jump zone of the client
+  int32_t getJumpZoneSize(const BaseClientProxy *) const;
+
+  // change the active m_computer
+  void switchComputer(BaseClientProxy *, int32_t x, int32_t y, bool forScreenSaver);
+
+  // jump to computer
+  void jumpToComputer(BaseClientProxy *);
+
+  // convert pixel position to fraction, using x or y depending on the
+  // direction.
+  float mapToFraction(const BaseClientProxy *, Direction, int32_t x, int32_t y) const;
+
+  // convert fraction to pixel position, writing only x or y depending
+  // on the direction.
+  void mapToPixel(const BaseClientProxy *, Direction, float f, int32_t &x, int32_t &y) const;
+
+  // returns true if the client has a neighbor anywhere along the edge
+  // indicated by the direction.
+  bool hasAnyNeighbor(const BaseClientProxy *, Direction) const;
+
+  // lookup neighboring computer, mapping the coordinate independent of
+  // the direction to the neighbor's coordinate space.
+  BaseClientProxy *getNeighbor(const BaseClientProxy *, Direction, int32_t &x, int32_t &y) const;
+
+  // lookup neighboring computer.  given a position relative to the
+  // source computer, find the computer we should move onto and where.
+  // if the position is sufficiently far from the source then we
+  // cross multiple computers.  if there is no suitable computer then
+  // return nullptr and x,y are not modified.
+  BaseClientProxy *mapToNeighbor(BaseClientProxy *, Direction, int32_t &x, int32_t &y) const;
+
+  // adjusts x and y or neither to avoid ending up in a jump zone
+  // after entering the client in the given direction.
+  void avoidJumpZone(const BaseClientProxy *, Direction, int32_t &x, int32_t &y) const;
+
+  // test if a switch is permitted.  this includes testing user
+  // options like switch delay and tracking any state required to
+  // implement them.  returns true iff a switch is permitted.
+  bool isSwitchOkay(BaseClientProxy *dst, Direction, int32_t x, int32_t y, int32_t xActive, int32_t yActive);
+
+  // update switch state due to a mouse move at \p x, \p y that
+  // doesn't switch computers.
+  void noSwitch(int32_t x, int32_t y);
+
+  // stop switch timers
+  void stopSwitch();
+
+  // start two tap switch timer
+  void startSwitchTwoTap();
+
+  // arm the two tap switch timer if \p x, \p y is outside the tap zone
+  void armSwitchTwoTap(int32_t x, int32_t y);
+
+  // stop the two tap switch timer
+  void stopSwitchTwoTap();
+
+  // returns true iff the two tap switch timer is started
+  bool isSwitchTwoTapStarted() const;
+
+  // returns true iff should switch because of two tap
+  bool shouldSwitchTwoTap() const;
+
+  // start delay switch timer
+  void startSwitchWait(int32_t x, int32_t y);
+
+  // stop delay switch timer
+  void stopSwitchWait();
+
+  // returns true iff the delay switch timer is started
+  bool isSwitchWaitStarted() const;
+
+  // returns the corner (ScreenSwitchCornerMasks) where x,y is on the
+  // given client.  corners have the given size.
+  uint32_t getCorner(const BaseClientProxy *, int32_t x, int32_t y, int32_t size) const;
+
+  // stop relative mouse moves
+  void stopRelativeMoves();
+
+  // send computer options to \c client
+  void sendOptions(BaseClientProxy *client) const;
+
+  // process options from configuration
+  void processOptions();
+
+  // event handlers
+  void handleShapeChanged(BaseClientProxy *client);
+  void handleClipboardGrabbed(const Event &event, BaseClientProxy *client);
+  void handleClipboardChanged(const Event &event, BaseClientProxy *client);
+  void handleKeyDownEvent(const Event &event);
+  void handleKeyUpEvent(const Event &event);
+  void handleKeyRepeatEvent(const Event &event);
+  void handleButtonDownEvent(const Event &event);
+  void handleButtonUpEvent(const Event &event);
+  void handleMotionPrimaryEvent(const Event &event);
+  void handleMotionSecondaryEvent(const Event &event);
+  void handleWheelEvent(const Event &event);
+  void handleSwitchWaitTimeout();
+  void handleClientDisconnected(BaseClientProxy *client);
+  void handleClientCloseTimeout(BaseClientProxy *client);
+  void handleSwitchToComputerEvent(const Event &event);
+  void handleSwitchInDirectionEvent(const Event &event);
+  void handleToggleComputerEvent(const Event &);
+  void handleKeyboardBroadcastEvent(const Event &event);
+  void handleLockCursorToComputerEvent(const Event &event);
+
+  // event processing
+  void onClipboardChanged(const BaseClientProxy *sender, ClipboardID id, uint32_t seqNum);
+  void onScreensaver(bool activated);
+  void onKeyDown(KeyID, KeyModifierMask, KeyButton, const std::string &, const char *computers);
+  void onKeyUp(KeyID, KeyModifierMask, KeyButton, const char *computers);
+  void onKeyRepeat(KeyID, KeyModifierMask, int32_t, KeyButton, const std::string &);
+  void onMouseDown(ButtonID);
+  void onMouseUp(ButtonID);
+  bool onMouseMovePrimary(int32_t x, int32_t y);
+  void onMouseMoveSecondary(int32_t dx, int32_t dy);
+  void onMouseWheel(int32_t xDelta, int32_t yDelta);
+
+  // add client to list and attach event handlers for client
+  bool addClient(BaseClientProxy *);
+
+  // remove client from list and detach event handlers for client
+  bool removeClient(BaseClientProxy *);
+
+  // close a client
+  void closeClient(BaseClientProxy *, const char *msg);
+
+  // close clients not in \p config
+  void closeClients(const ServerConfig &config);
+
+  // close all clients whether they've completed the handshake or not,
+  // except the primary client
+  void closeAllClients();
+
+  // remove clients from internal state
+  void removeActiveClient(BaseClientProxy *);
+  void removeOldClient(BaseClientProxy *);
+
+  // force the cursor off of \p client
+  void forceLeaveClient(const BaseClientProxy *client);
+
+private:
+  class ClipboardInfo
+  {
+  public:
+    ClipboardInfo() = default;
+
+  public:
+    Clipboard m_clipboard;
+    std::string m_clipboardData;
+    std::string m_clipboardOwner;
+    uint32_t m_clipboardSeqNum = 0;
+  };
+  // Order suggested by clang
+
+  // the Primary Computer Client
+  PrimaryClient *m_primaryClient = nullptr;
+
+  // the client with focus
+  BaseClientProxy *m_active = nullptr;
+
+  // current configuration
+  ServerConfig *m_config = nullptr;
+
+  // input filter (from m_config);
+  InputFilter *m_inputFilter = nullptr;
+
+  // state saved when screen saver activates
+  BaseClientProxy *m_activeSaver = nullptr;
+
+  BaseClientProxy *m_switchComputer = nullptr;
+  double m_switchWaitDelay = 0.0;
+  EventQueueTimer *m_switchWaitTimer = nullptr;
+
+  // delay for double-tap computer switching
+  double m_switchTwoTapDelay = 0.0;
+
+  // server computer
+  deskflow::Computer *m_computer;
+
+  IEventQueue *m_events = nullptr;
+  size_t m_maximumClipboardSize = INT_MAX;
+  ClientListener *m_clientListener = nullptr;
+  Stopwatch m_switchTwoTapTimer;
+
+  // Name of computer broadcasting the keyboard events
+  std::string m_keyboardBroadcastingComputers;
+
+  // all clients (including the primary client) indexed by name
+  using ClientList = std::map<std::string, BaseClientProxy *>;
+  using ClientSet = std::set<BaseClientProxy *>;
+  ClientList m_clients;
+  ClientSet m_clientSet;
+
+  // all old connections that we're waiting to hangup
+  using OldClients = std::map<BaseClientProxy *, EventQueueTimer *>;
+  OldClients m_oldClients;
+
+  // clipboard cache
+  ClipboardInfo m_clipboards[kClipboardEnd];
+
+  // used in hello message sent to the client
+  NetworkProtocol m_protocol = NetworkProtocol::Barrier;
+
+  // the sequence number of enter messages
+  uint32_t m_seqNum = 0;
+
+  // current mouse position (in absolute computer coordinates) on
+  // whichever computer is active
+  int32_t m_x;
+  int32_t m_y;
+
+  // last mouse deltas.  this is needed to smooth out double tap
+  // on win32 which reports bogus mouse motion at the edge of
+  // the computer when using low level hooks, synthesizing motion
+  // in the opposite direction the mouse actually moved.
+  int32_t m_xDelta = 0;
+  int32_t m_yDelta = 0;
+  int32_t m_xDelta2 = 0;
+  int32_t m_yDelta2 = 0;
+
+  int32_t m_xSaver;
+  int32_t m_ySaver;
+
+  // state for delayed computer switching
+  int32_t m_switchWaitX;
+  int32_t m_switchWaitY;
+
+  int32_t m_switchTwoTapZone = 3;
+
+  // common state for computer switch tests.  all tests are always
+  // trying to reach the same computer in the same direction.
+  Direction m_switchDir = Direction::NoDirection;
+
+  bool m_switchTwoTapEngaged = false;
+  bool m_switchTwoTapArmed = false;
+
+  // relative mouse move option
+  bool m_relativeMoves = false;
+
+  // flag whether or not we have broadcasting enabled and the computers to
+  // which we should send broadcasted keys.
+  bool m_keyboardBroadcasting = false;
+
+  // computer locking (former scroll lock)
+  bool m_lockedToComputer = false;
+
+  bool m_defaultLockToComputerState = false;
+  bool m_disableLockToComputer = false;
+  bool m_enableClipboard = true;
 };

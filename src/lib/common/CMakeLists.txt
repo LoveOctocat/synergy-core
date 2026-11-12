@@ -1,24 +1,44 @@
-# synergy -- mouse and keyboard sharing utility
-# Copyright (C) 2012-2016 Symless Ltd.
-# Copyright (C) 2009 Nick Bolton
-# 
-# This package is free software; you can redistribute it and/or
-# modify it under the terms of the GNU General Public License
-# found in the file LICENSE that should have accompanied this file.
-# 
-# This package is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# SPDX-FileCopyrightText: (C) 2024 - 2025 Chris Rizzitello <sithlord48@gmail.com>
+# SPDX-License-Identifier: MIT
 
-file(GLOB headers "*.h")
-file(GLOB sources "*.cpp")
-
-if (SYNERGY_ADD_HEADERS)
-    list(APPEND sources ${headers})
+set(CORE_BINARY "${CMAKE_PROJECT_NAME}-core")
+if(WIN32)
+  string(APPEND CORE_BINARY ".exe")
 endif()
 
-add_library(common STATIC ${sources})
+configure_file(Constants.h.in Constants.h @ONLY)
+configure_file(VersionInfo.h.in VersionInfo.h @ONLY)
+
+add_library(common STATIC
+  Action.cpp
+  Action.h
+  Coordinate.h
+  Enums.h
+  ExitCodes.h
+  Hotkey.cpp
+  Hotkey.h
+  I18N.h
+  I18N.cpp
+  KeyModifierID.h
+  KeyboardModifier.h
+  KeySequence.h
+  KeySequence.cpp
+  LogLevel.h
+  NetworkProtocol.h
+  PlatformInfo.h
+  Settings.h
+  Settings.cpp
+  QSettingsProxy.cpp
+  QSettingsProxy.h
+  UrlConstants.h
+  ${CMAKE_CURRENT_BINARY_DIR}/Constants.h
+  ${CMAKE_CURRENT_BINARY_DIR}/VersionInfo.h
+)
+
+target_link_libraries(common PUBLIC Qt6::Core)
+
+target_include_directories(common
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src/lib>
+    $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/src/lib>
+)

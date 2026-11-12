@@ -1,58 +1,35 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2012 Nick Bolton
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2012 - 2016 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2012 Nick Bolton
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #include "platform/MSWindowsDebugOutputter.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
-#include <string>
 
-MSWindowsDebugOutputter::MSWindowsDebugOutputter()
+#include <QString>
+
+void MSWindowsDebugOutputter::open(const QString &title)
 {
+  // do nothing
 }
 
-MSWindowsDebugOutputter::~MSWindowsDebugOutputter()
+void MSWindowsDebugOutputter::close()
 {
+  // do nothing
 }
 
-void
-MSWindowsDebugOutputter::open(const char* title)
+bool MSWindowsDebugOutputter::write(LogLevel::Level level, const QString &msg)
 {
+  std::wstring out = msg.toStdWString() + L"\n";
+  OutputDebugString(out.c_str());
+  return true;
 }
 
-void
-MSWindowsDebugOutputter::close()
+void MSWindowsDebugOutputter::flush()
 {
-}
-
-void
-MSWindowsDebugOutputter::show(bool showIfEmpty)
-{
-}
-
-bool
-MSWindowsDebugOutputter::write(ELevel level, const char* msg)
-{
-    OutputDebugString((std::string(msg) + "\n").c_str());
-    return true;
-}
-
-void
-MSWindowsDebugOutputter::flush()
-{
+  // do nothing
 }

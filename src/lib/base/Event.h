@@ -1,126 +1,177 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2004 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2012 - 2016 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2004 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #pragma once
 
-#include "common/basic_types.h"
-#include "common/stdmap.h"
+#include "EventTypes.h"
 
-class EventData {
+#include <assert.h>
+#include <cstdlib>
+
+using deskflow::EventTypes;
+
+class EventData
+{
 public:
-    EventData() { }
-    virtual ~EventData() { }
+  EventData() = default;
+  virtual ~EventData() = default;
+};
+
+class ExitEventData : public EventData
+{
+public:
+  explicit ExitEventData(int exitCode) : m_exitCode(exitCode) {};
+  ~ExitEventData() override = default;
+  int exitCode() const
+  {
+    return m_exitCode;
+  }
+
+private:
+  int m_exitCode;
 };
 
 //! Event
 /*!
-A \c Event holds an event type and a pointer to event data.
+ \c Event holds an event type and a pointer to event data. It is movable, but not copyable
 */
-class Event {
+class Event
+{
 public:
-    typedef UInt32 Type;
-    enum {
-        kUnknown,    //!< The event type is unknown
-        kQuit,        //!< The quit event
-        kSystem,    //!< The data points to a system event type
-        kTimer,        //!< The data points to timer info
-        kLast        //!< Must be last
-    };
+  using Flags = uint32_t;
+  struct EventFlags
+  {
+    inline static const Flags NoFlags = 0x00;            //!< No flags
+    inline static const Flags DeliverImmediately = 0x01; //!< Dispatch and free event immediately
+    inline static const Flags DontFreeData = 0x02;       //!< Don't free data in deleteData
+  };
 
-    typedef UInt32 Flags;
-    enum {
-        kNone                = 0x00,    //!< No flags
-        kDeliverImmediately    = 0x01,    //!< Dispatch and free event immediately
-        kDontFreeData        = 0x02    //!< Don't free data in deleteData
-    };
+  Event() = default;
+  Event(const Event &) = delete;
+  Event(Event &&other) = default;
+  Event &operator=(const Event &) = delete;
+  Event &operator=(Event &&) = default;
 
-    Event();
+  //! Create \c Event with data (POD)
+  /*!
+  The \p data must be POD (plain old data) allocated by malloc(),
+  which means it cannot have a constructor, destructor or be
+  composed of any types that do. For non-POD (normal C++ objects
+  use \c setDataObject() or use appropriate constructor.
+  \p target is the intended recipient of the event.
+  \p flags is any combination of \c Flags.
+  */
+  explicit Event(EventTypes type, void *target = nullptr, void *data = nullptr, Flags flags = EventFlags::NoFlags)
+      : m_type(type),
+        m_target(target),
+        m_data(data),
+        m_flags(flags)
+  {
+    // do nothing
+  }
 
-    //! Create \c Event with data (POD)
-    /*!
-    The \p data must be POD (plain old data) allocated by malloc(),
-    which means it cannot have a constructor, destructor or be
-    composed of any types that do. For non-POD (normal C++ objects
-    use \c setDataObject().
-    \p target is the intended recipient of the event.
-    \p flags is any combination of \c Flags.
-    */
-    Event(Type type, void* target = NULL, void* data = NULL,
-                             Flags flags = kNone);
+  Event(EventTypes type, void *target, EventData *dataObject) : m_type(type), m_target(target), m_dataObject(dataObject)
+  {
+    // do nothing
+  }
 
-    //! @name manipulators
-    //@{
+  //! @name manipulators
+  //@{
 
-    //! Release event data
-    /*!
-    Deletes event data for the given event (using free()).
-    */
-    static void            deleteData(const Event&);
-    
-    //! Set data (non-POD)
-    /*!
-    Set non-POD (non plain old data), where delete is called when the event
-    is deleted, and the destructor is called.
-    */
-    void                setDataObject(EventData* dataObject);
+  //! Release event data
+  /*!
+  Deletes event data for the given event (using free()).
+  */
+  static void deleteData(const Event &event)
+  {
+    switch (event.getType()) {
+      using enum EventTypes;
+    case Unknown:
+    case System:
+    case Timer:
+      break;
 
-    //@}
-    //! @name accessors
-    //@{
+    default:
+      if ((event.getFlags() & EventFlags::DontFreeData) == 0) {
+        free(event.getData());
+        delete event.getDataObject();
+      }
+      break;
+    }
+  }
 
-    //! Get event type
-    /*!
-    Returns the event type.
-    */
-    Type                getType() const;
+  //! Set data (non-POD)
+  /*!
+  Set non-POD (non plain old data), where delete is called when the event
+  is deleted, and the destructor is called.
+  */
+  void setDataObject(EventData *dataObject)
+  {
+    assert(m_dataObject == nullptr);
+    m_dataObject = dataObject;
+  };
 
-    //! Get the event target
-    /*!
-    Returns the event target.
-    */
-    void*                getTarget() const;
+  //@}
+  //! @name accessors
+  //@{
 
-    //! Get the event data (POD).
-    /*!
-    Returns the event data (POD).
-    */
-    void*                getData() const;
+  //! Get event type
+  /*!
+  Returns the event type.
+  */
+  EventTypes getType() const
+  {
+    return m_type;
+  }
 
-    //! Get the event data (non-POD)
-    /*!
-    Returns the event data (non-POD). The difference between this and
-    \c getData() is that when delete is called on this data, so non-POD
-    (non plain old data) dtor is called.
-    */
-    EventData*            getDataObject() const;
+  //! Get the event target
+  /*!
+  Returns the event target.
+  */
+  void *getTarget() const
+  {
+    return m_target;
+  }
 
-    //! Get event flags
-    /*!
-    Returns the event flags.
-    */
-    Flags                getFlags() const;
-    
-    //@}
+  //! Get the event data (POD).
+  /*!
+  Returns the event data (POD).
+  */
+  void *getData() const
+  {
+    return m_data;
+  }
+
+  //! Get the event data (non-POD)
+  /*!
+  Returns the event data (non-POD). The difference between this and
+  \c getData() is that when delete is called on this data, so non-POD
+  (non plain old data) dtor is called.
+  */
+  EventData *getDataObject() const
+  {
+    return m_dataObject;
+  }
+
+  //! Get event flags
+  /*!
+  Returns the event flags.
+  */
+  Flags getFlags() const
+  {
+    return m_flags;
+  }
+
+  //@}
 
 private:
-    Type                m_type;
-    void*                m_target;
-    void*                m_data;
-    Flags                m_flags;
-    EventData*            m_dataObject;
+  EventTypes m_type = EventTypes::Unknown;
+  void *m_target = nullptr;
+  void *m_data = nullptr;
+  Flags m_flags = EventFlags::NoFlags;
+  EventData *m_dataObject = nullptr;
 };

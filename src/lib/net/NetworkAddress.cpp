@@ -1,27 +1,17 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2002 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2012 - 2016 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2002 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #include "net/NetworkAddress.h"
 
-#include "net/XSocket.h"
 #include "arch/Arch.h"
-#include "arch/XArch.h"
+#include "arch/ArchException.h"
+#include "net/SocketException.h"
 
+#include <algorithm>
 #include <cstdlib>
 
 //
@@ -30,185 +20,185 @@
 
 // name re-resolution adapted from a patch by Brent Priddy.
 
-NetworkAddress::NetworkAddress() :
-    m_address(NULL),
-    m_hostname(),
-    m_port(0)
+NetworkAddress::NetworkAddress(int port) : m_port(port)
 {
-    // note -- make no calls to Network socket interface here;
-    // we're often called prior to Network::init().
+  checkPort();
+  m_address = ARCH->newAnyAddr(IArchNetwork::AddressFamily::INet);
+  ARCH->setAddrPort(m_address, m_port);
 }
 
-NetworkAddress::NetworkAddress(int port) :
-    m_address(NULL),
-    m_hostname(),
-    m_port(port)
+NetworkAddress::NetworkAddress(const NetworkAddress &addr) : m_hostname(addr.m_hostname), m_port(addr.m_port)
 {
-    checkPort();
-    m_address = ARCH->newAnyAddr(IArchNetwork::kINET);
-    ARCH->setAddrPort(m_address, m_port);
+  *this = addr;
 }
 
-NetworkAddress::NetworkAddress(const NetworkAddress& addr) :
-    m_address(addr.m_address != NULL ? ARCH->copyAddr(addr.m_address) : NULL),
-    m_hostname(addr.m_hostname),
-    m_port(addr.m_port)
+NetworkAddress::NetworkAddress(const std::string &hostname, int port) : m_hostname(hostname), m_port(port)
 {
-    // do nothing
-}
+  // detect internet protocol version with colon count
+  auto isColon = [](char c) { return c == ':'; };
 
-NetworkAddress::NetworkAddress(const String& hostname, int port) :
-    m_address(NULL),
-    m_hostname(hostname),
-    m_port(port)
-{
-    // check for port suffix
-    String::size_type i = m_hostname.rfind(':');
-    if (i != String::npos && i + 1 < m_hostname.size()) {
-        // found a colon.  see if it looks like an IPv6 address.
-        bool colonNotation = false;
-        bool dotNotation   = false;
-        bool doubleColon   = false;
-        for (String::size_type j = 0; j < i; ++j) {
-            if (m_hostname[j] == ':') {
-                colonNotation = true;
-                dotNotation   = false;
-                if (m_hostname[j + 1] == ':') {
-                    doubleColon = true;
-                }
-            }
-            else if (m_hostname[j] == '.' && colonNotation) {
-                dotNotation = true;
-            }
-        }
-
-        // port suffix is ambiguous with IPv6 notation if there's
-        // a double colon and the end of the address is not in dot
-        // notation.  in that case we assume it's not a port suffix.
-        // the user can replace the double colon with zeros to
-        // disambiguate.
-        if ((!doubleColon || dotNotation) && !colonNotation) {
-            // parse port from hostname
-            char* end;
-            const char* chostname = m_hostname.c_str();
-            long suffixPort = strtol(chostname + i + 1, &end, 10);
-            if (end == chostname + i + 1 || *end != '\0') {
-                throw XSocketAddress(XSocketAddress::kBadPort,
-                                            m_hostname, m_port);
-            }
-
-            // trim port from hostname
-            m_hostname.erase(i);
-
-            // save port
-            m_port = static_cast<int>(suffixPort);
-        }
+  if (auto colonCount = std::count_if(m_hostname.begin(), m_hostname.end(), isColon); colonCount == 1) {
+    // ipv4 with port part
+    auto hostIt = m_hostname.find(':');
+    try {
+      m_port = std::stoi(m_hostname.substr(hostIt + 1));
+    } catch (...) {
+      throw SocketAddressException(SocketAddressException::SocketError::BadPort, m_hostname, m_port);
     }
 
-    // check port number
-    checkPort();
+    auto endHostnameIt = static_cast<int>(hostIt);
+    m_hostname = m_hostname.substr(0, endHostnameIt > 0 ? endHostnameIt : 0);
+  } else if (colonCount > 1) {
+    // ipv6 part
+    if (m_hostname[0] == '[') {
+      // ipv6 with port part
+      std::string portDelimeter = "]:";
+      auto hostIt = m_hostname.find(portDelimeter);
+
+      // bad syntax of ipv6 with port
+      if (hostIt == std::string::npos) {
+        throw SocketAddressException(SocketAddressException::SocketError::Unknown, m_hostname, m_port);
+      }
+
+      auto portSuffix = m_hostname.substr(hostIt + portDelimeter.size());
+      // port is implied but omitted
+      if (portSuffix.empty()) {
+        throw SocketAddressException(SocketAddressException::SocketError::BadPort, m_hostname, m_port);
+      }
+      try {
+        m_port = std::stoi(portSuffix);
+      } catch (...) {
+        // port is not a number
+        throw SocketAddressException(SocketAddressException::SocketError::BadPort, m_hostname, m_port);
+      }
+
+      auto endHostnameIt = static_cast<int>(hostIt) - 1;
+      m_hostname = m_hostname.substr(1, endHostnameIt > 0 ? endHostnameIt : 0);
+    }
+
+    // ensure that ipv6 link-local adress ended with scope id
+    if (m_hostname.rfind("fe80:", 0) == 0 && m_hostname.find('%') == std::string::npos) {
+      throw SocketAddressException(SocketAddressException::SocketError::Unknown, m_hostname, m_port);
+    }
+  }
+
+  // check port number
+  checkPort();
 }
 
 NetworkAddress::~NetworkAddress()
 {
-    if (m_address != NULL) {
-        ARCH->closeAddr(m_address);
-    }
+  if (m_address != nullptr) {
+    ARCH->closeAddr(m_address);
+    m_address = nullptr;
+  }
 }
 
-NetworkAddress&
-NetworkAddress::operator=(const NetworkAddress& addr)
+NetworkAddress &NetworkAddress::operator=(const NetworkAddress &addr)
 {
-    ArchNetAddress newAddr = NULL;
-    if (addr.m_address != NULL) {
-        newAddr = ARCH->copyAddr(addr.m_address);
-    }
-    if (m_address != NULL) {
-        ARCH->closeAddr(m_address);
-    }
-    m_address  = newAddr;
-    m_hostname = addr.m_hostname;
-    m_port     = addr.m_port;
-    return *this;
+  if (m_address != nullptr) {
+    ARCH->closeAddr(m_address);
+    m_address = nullptr;
+  }
+
+  ArchNetAddress newAddr = nullptr;
+  if (addr.m_address != nullptr) {
+    newAddr = ARCH->copyAddr(addr.m_address);
+  }
+  m_address = newAddr;
+
+  m_hostname = addr.m_hostname;
+  m_port = addr.m_port;
+  return *this;
 }
 
-void
-NetworkAddress::resolve()
+size_t NetworkAddress::resolve(size_t index)
 {
-    // discard previous address
-    if (m_address != NULL) {
-        ARCH->closeAddr(m_address);
-        m_address = NULL;
-    }
+  size_t resolvedAddressesCount = 0;
+  // discard previous address
+  if (m_address != nullptr) {
+    ARCH->closeAddr(m_address);
+    m_address = nullptr;
+  }
 
-    try {
-        // if hostname is empty then use wildcard address otherwise look
-        // up the name.
-        if (m_hostname.empty()) {
-            m_address = ARCH->newAnyAddr(IArchNetwork::kINET);
+  try {
+    if (m_hostname.empty()) {
+      m_address = ARCH->newAnyAddr(IArchNetwork::AddressFamily::INet);
+      resolvedAddressesCount = 1;
+    } else {
+      std::vector<ArchNetAddress> ipAddresses;
+      {
+        auto addresses = ARCH->nameToAddr(m_hostname);
+        for (auto address : addresses) {
+          if (ARCH->getAddrFamily(address) != IArchNetwork::AddressFamily::Unknown) {
+            ipAddresses.emplace_back(address);
+          } else {
+            ARCH->closeAddr(address);
+          }
         }
-        else {
-            m_address = ARCH->nameToAddr(m_hostname);
+      }
+
+      resolvedAddressesCount = ipAddresses.size();
+      if (resolvedAddressesCount <= 0) {
+        throw ArchNetworkNameUnknownException("Hostname lookup failed");
+      }
+      if (index < resolvedAddressesCount - 1) {
+        m_address = ipAddresses[index];
+      } else {
+        m_address = ipAddresses[resolvedAddressesCount - 1];
+      }
+
+      for (auto address : ipAddresses) {
+        if (m_address != address) {
+          ARCH->closeAddr(address);
         }
+      }
     }
-    catch (XArchNetworkNameUnknown&) {
-        throw XSocketAddress(XSocketAddress::kNotFound, m_hostname, m_port);
-    }
-    catch (XArchNetworkNameNoAddress&) {
-        throw XSocketAddress(XSocketAddress::kNoAddress, m_hostname, m_port);
-    }
-    catch (XArchNetworkNameUnsupported&) {
-        throw XSocketAddress(XSocketAddress::kUnsupported, m_hostname, m_port);
-    }
-    catch (XArchNetworkName&) {
-        throw XSocketAddress(XSocketAddress::kUnknown, m_hostname, m_port);
-    }
+  } catch (ArchNetworkNameUnknownException &) {
+    throw SocketAddressException(SocketAddressException::SocketError::NotFound, m_hostname, m_port);
+  } catch (ArchNetworkNameNoAddressException &) {
+    throw SocketAddressException(SocketAddressException::SocketError::NoAddress, m_hostname, m_port);
+  } catch (ArchNetworkNameUnsupportedException &) {
+    throw SocketAddressException(SocketAddressException::SocketError::Unsupported, m_hostname, m_port);
+  } catch (ArchNetworkNameException &) {
+    throw SocketAddressException(SocketAddressException::SocketError::Unknown, m_hostname, m_port);
+  }
 
-    // set port in address
-    ARCH->setAddrPort(m_address, m_port);
+  // set port in address
+  ARCH->setAddrPort(m_address, m_port);
+
+  return resolvedAddressesCount;
 }
 
-bool
-NetworkAddress::operator==(const NetworkAddress& addr) const
+bool NetworkAddress::operator==(const NetworkAddress &addr) const
 {
-    return m_address == addr.m_address || ARCH->isEqualAddr(m_address, addr.m_address);
+  return m_address == addr.m_address || ARCH->isEqualAddr(m_address, addr.m_address);
 }
 
-bool
-NetworkAddress::operator!=(const NetworkAddress& addr) const
+bool NetworkAddress::isValid() const
 {
-    return !operator==(addr);
+  return (m_address != nullptr);
 }
 
-bool
-NetworkAddress::isValid() const
+const ArchNetAddress &NetworkAddress::getAddress() const
 {
-    return (m_address != NULL);
+  return m_address;
 }
 
-const ArchNetAddress&
-NetworkAddress::getAddress() const
+int NetworkAddress::getPort() const
 {
-    return m_address;
+  return m_port;
 }
 
-int
-NetworkAddress::getPort() const
+std::string NetworkAddress::getHostname() const
 {
-    return m_port;
+  return m_hostname;
 }
 
-String
-NetworkAddress::getHostname() const
+void NetworkAddress::checkPort() const
 {
-    return m_hostname;
-}
-
-void
-NetworkAddress::checkPort()
-{
-    // check port number
-    if (m_port <= 0 || m_port > 65535) {
-        throw XSocketAddress(XSocketAddress::kBadPort, m_hostname, m_port);
-    }
+  // check port number
+  if (m_port < 0 || m_port > 65535) {
+    throw SocketAddressException(SocketAddressException::SocketError::BadPort, m_hostname, m_port);
+  }
 }

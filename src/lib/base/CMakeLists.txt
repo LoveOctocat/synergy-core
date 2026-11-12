@@ -1,28 +1,51 @@
-# synergy -- mouse and keyboard sharing utility
-# Copyright (C) 2012-2016 Symless Ltd.
-# Copyright (C) 2009 Nick Bolton
-# 
-# This package is free software; you can redistribute it and/or
-# modify it under the terms of the GNU General Public License
-# found in the file LICENSE that should have accompanied this file.
-# 
-# This package is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# SPDX-FileCopyrightText: (C) 2026 Deskflow Developers
+# SPDX-FileCopyrightText: (C) 2024 Chris Rizzitello <sithlord48@gmail.com>
+# SPDX-FileCopyrightText: (C) 2012 - 2024 Symless Ltd
+# SPDX-FileCopyrightText: (C) 2009 - 2012 Nick Bolton
+# SPDX-License-Identifier: MIT
 
-file(GLOB headers "*.h")
-file(GLOB sources "*.cpp")
-
-if (SYNERGY_ADD_HEADERS)
-    list(APPEND sources ${headers})
+if(APPLE)
+  set(PLATFORM_CODE
+    OSXAutoReleasePool.h
+    OSXAutoReleasePool.mm
+  )
 endif()
 
-add_library(base STATIC ${sources})
+add_library(base STATIC ${PLATFORM_CODE}
+  BaseException.cpp
+  BaseException.h
+  DirectionTypes.h
+  Event.h
+  EventQueue.cpp
+  EventQueue.h
+  EventQueueTimer.h
+  EventTypes.h
+  FinalAction.h
+  FunctionEventJob.cpp
+  FunctionEventJob.h
+  FunctionJob.cpp
+  FunctionJob.h
+  IEventQueue.h
+  IEventQueueBuffer.h
+  IJob.h
+  ILogOutputter.h
+  LogOutputters.cpp
+  LogOutputters.h
+  Log.cpp
+  Log.h
+  PriorityQueue.h
+  SimpleEventQueueBuffer.cpp
+  SimpleEventQueueBuffer.h
+  Stopwatch.cpp
+  Stopwatch.h
+  String.cpp
+  String.h
+  TMethodJob.h
+  Unicode.cpp
+  Unicode.h
+)
 
-if (UNIX)
-    target_link_libraries(base common)
+target_link_libraries(base PUBLIC arch)
+if (CMAKE_CXX_BYTE_ORDER STREQUAL "BIG_ENDIAN")
+  target_compile_definitions(base PUBLIC WORDS_BIGENDIAN=1)
 endif()

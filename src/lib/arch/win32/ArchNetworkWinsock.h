@@ -1,19 +1,9 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2002 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2026 Deskflow Developers
+ * SPDX-FileCopyrightText: (C) 2012 - 2016 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2002 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #pragma once
@@ -25,87 +15,90 @@
 #endif
 #define INCL_WINSOCK_API_TYPEDEFS 0
 
-#include "arch/IArchNetwork.h"
 #include "arch/IArchMultithread.h"
+#include "arch/IArchNetwork.h"
 
 #include <WinSock2.h>
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <list>
+#include <mutex>
 
 #pragma comment(lib, "ws2_32.lib")
 
 #define ARCH_NETWORK ArchNetworkWinsock
 
-class ArchSocketImpl {
+class ArchSocketImpl
+{
 public:
-    SOCKET                m_socket;
-    int                    m_refCount;
-    WSAEVENT            m_event;
-    bool                m_pollWrite;
+  SOCKET m_socket;
+  int m_refCount;
+  WSAEVENT m_event;
+  bool m_pollWrite;
 };
 
-class ArchNetAddressImpl {
+class ArchNetAddressImpl
+{
 public:
-    static ArchNetAddressImpl* alloc(size_t);
+  static ArchNetAddressImpl *alloc(size_t);
 
 public:
-    int                            m_len;
-    struct sockaddr_storage        m_addr;
+  int m_len;
+  struct sockaddr_storage m_addr;
 };
-#define ADDR_HDR_SIZE    offsetof(ArchNetAddressImpl, m_addr)
-#define TYPED_ADDR(type_, addr_) (reinterpret_cast<type_*>(&addr_->m_addr))
+#define ADDR_HDR_SIZE offsetof(ArchNetAddressImpl, m_addr)
+#define TYPED_ADDR(type_, addr_) (reinterpret_cast<type_ *>(&addr_->m_addr))
 
 //! Win32 implementation of IArchNetwork
-class ArchNetworkWinsock : public IArchNetwork {
+class ArchNetworkWinsock : public IArchNetwork
+{
 public:
-    ArchNetworkWinsock();
-    virtual ~ArchNetworkWinsock();
+  ArchNetworkWinsock() = default;
+  ~ArchNetworkWinsock() override;
 
-    virtual void init();
+  void init() override;
 
-    // IArchNetwork overrides
-    virtual ArchSocket    newSocket(EAddressFamily, ESocketType);
-    virtual ArchSocket    copySocket(ArchSocket s);
-    virtual void        closeSocket(ArchSocket s);
-    virtual void        closeSocketForRead(ArchSocket s);
-    virtual void        closeSocketForWrite(ArchSocket s);
-    virtual void        bindSocket(ArchSocket s, ArchNetAddress addr);
-    virtual void        listenOnSocket(ArchSocket s);
-    virtual ArchSocket    acceptSocket(ArchSocket s, ArchNetAddress* addr);
-    virtual bool        connectSocket(ArchSocket s, ArchNetAddress name);
-    virtual int            pollSocket(PollEntry[], int num, double timeout);
-    virtual void        unblockPollSocket(ArchThread thread);
-    virtual size_t        readSocket(ArchSocket s, void* buf, size_t len);
-    virtual size_t        writeSocket(ArchSocket s,
-                            const void* buf, size_t len);
-    virtual void        throwErrorOnSocket(ArchSocket);
-    virtual bool        setNoDelayOnSocket(ArchSocket, bool noDelay);
-    virtual bool        setReuseAddrOnSocket(ArchSocket, bool reuse);
-    virtual std::string        getHostName();
-    virtual ArchNetAddress    newAnyAddr(EAddressFamily);
-    virtual ArchNetAddress    copyAddr(ArchNetAddress);
-    virtual ArchNetAddress    nameToAddr(const std::string&);
-    virtual void            closeAddr(ArchNetAddress);
-    virtual std::string        addrToName(ArchNetAddress);
-    virtual std::string        addrToString(ArchNetAddress);
-    virtual EAddressFamily    getAddrFamily(ArchNetAddress);
-    virtual void            setAddrPort(ArchNetAddress, int port);
-    virtual int                getAddrPort(ArchNetAddress);
-    virtual bool            isAnyAddr(ArchNetAddress);
-    virtual bool            isEqualAddr(ArchNetAddress, ArchNetAddress);
-
-private:
-    void                initModule(HMODULE);
-
-    void                setBlockingOnSocket(SOCKET, bool blocking);
-
-    void                throwError(int);
-    void                throwNameError(int);
+  // IArchNetwork overrides
+  ArchSocket newSocket(AddressFamily, SocketType) override;
+  ArchSocket copySocket(ArchSocket s) override;
+  void closeSocket(ArchSocket s) override;
+  void closeSocketForRead(ArchSocket s) override;
+  void closeSocketForWrite(ArchSocket s) override;
+  void bindSocket(ArchSocket s, ArchNetAddress addr) override;
+  void listenOnSocket(ArchSocket s) override;
+  ArchSocket acceptSocket(ArchSocket s, ArchNetAddress *addr) override;
+  bool connectSocket(ArchSocket s, ArchNetAddress name) override;
+  int pollSocket(PollEntry[], int num, double timeout) override;
+  void unblockPollSocket(ArchThread thread) override;
+  size_t readSocket(ArchSocket s, void *buf, size_t len) override;
+  size_t writeSocket(ArchSocket s, const void *buf, size_t len) override;
+  void resetPollWriteOnSocket(ArchSocket s) override;
+  void throwErrorOnSocket(ArchSocket) override;
+  bool setNoDelayOnSocket(ArchSocket, bool noDelay) override;
+  void setKeepAliveOnSocket(ArchSocket, bool keepAlive) override;
+  bool setReuseAddrOnSocket(ArchSocket, bool reuse) override;
+  ArchNetAddress newAnyAddr(AddressFamily) override;
+  ArchNetAddress copyAddr(ArchNetAddress) override;
+  std::vector<ArchNetAddress> nameToAddr(const std::string &) override;
+  void closeAddr(ArchNetAddress) override;
+  std::string addrToName(ArchNetAddress) override;
+  std::string addrToString(ArchNetAddress) override;
+  AddressFamily getAddrFamily(ArchNetAddress) override;
+  void setAddrPort(ArchNetAddress, int port) override;
+  int getAddrPort(ArchNetAddress) override;
+  bool isAnyAddr(ArchNetAddress) override;
+  bool isEqualAddr(ArchNetAddress, ArchNetAddress) override;
 
 private:
-    typedef std::list<WSAEVENT> EventList;
+  void initModule(HMODULE);
 
-    ArchMutex            m_mutex;
-    EventList            m_unblockEvents;
+  void setBlockingOnSocket(SOCKET, bool blocking);
+
+  [[noreturn]] void throwError(int) const override;
+  [[noreturn]] void throwNameError(int) const override;
+
+  using EventList = std::list<WSAEVENT>;
+
+  std::mutex m_mutex;
+  EventList m_unblockEvents;
 };

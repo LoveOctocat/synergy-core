@@ -1,47 +1,40 @@
 /*
- * synergy -- mouse and keyboard sharing utility
- * Copyright (C) 2012-2016 Symless Ltd.
- * Copyright (C) 2004 Chris Schoeneman
- * 
- * This package is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * found in the file LICENSE that should have accompanied this file.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Deskflow -- mouse and keyboard sharing utility
+ * SPDX-FileCopyrightText: (C) 2026 Deskflow Developers
+ * SPDX-FileCopyrightText: (C) 2025 Stephen Jensen <sjensen313@proton.me>
+ * SPDX-FileCopyrightText: (C) 2012 - 2025 Synergy App Ltd
+ * SPDX-FileCopyrightText: (C) 2004 Chris Schoeneman
+ * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
 #pragma once
 
 #include "base/IEventQueueBuffer.h"
 
-#include <Carbon/Carbon.h>
+#include <condition_variable>
+#include <mutex>
+#include <queue>
 
 class IEventQueue;
 
 //! Event queue buffer for OS X
-class OSXEventQueueBuffer : public IEventQueueBuffer {
+class OSXEventQueueBuffer : public IEventQueueBuffer
+{
 public:
-    OSXEventQueueBuffer(IEventQueue* eventQueue);
-    virtual ~OSXEventQueueBuffer();
+  OSXEventQueueBuffer(IEventQueue *eventQueue);
+  ~OSXEventQueueBuffer() override = default;
 
-    // IEventQueueBuffer overrides
-    virtual void        init();
-    virtual void        waitForEvent(double timeout);
-    virtual Type        getEvent(Event& event, UInt32& dataID);
-    virtual bool        addEvent(UInt32 dataID);
-    virtual bool        isEmpty() const;
-    virtual EventQueueTimer*
-                        newTimer(double duration, bool oneShot) const;
-    virtual void        deleteTimer(EventQueueTimer*) const;
+  // IEventQueueBuffer overrides
+  void init() override;
+  void waitForEvent(double timeout) override;
+  Type getEvent(Event &event, uint32_t &dataID) override;
+  bool addEvent(uint32_t dataID) override;
+  bool isEmpty() const override;
 
 private:
-    EventRef            m_event;
-    IEventQueue*        m_eventQueue;
-    EventQueueRef        m_carbonEventQueue;
+  IEventQueue *m_eventQueue;
+
+  mutable std::mutex m_mutex;
+  std::condition_variable m_cond;
+  std::queue<uint32_t> m_dataQueue;
 };
